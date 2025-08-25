@@ -12,7 +12,9 @@ dependencies = [
     "djangorestframework (>=3.16.1,<4.0.0)",
     "markdown (>=3.8.2,<4.0.0)",
     "djangorestframework-simplejwt (>=5.5.1,<6.0.0)",
-    "python-dotenv (>=1.0.0,<2.0.0)"
+    "python-dotenv (>=1.0.0,<2.0.0)",
+    "google-genai (>=1.31.0,<2.0.0)",
+    "dotenv (>=0.9.9,<0.10.0)"
 ]
 
 [tool.poetry]
