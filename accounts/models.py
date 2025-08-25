@@ -1,8 +1,16 @@
+import uuid
+
 from django.db import models
-from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AbstractUser
+from django.conf import settings
+
+
+class User(AbstractUser):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
 
 class FileRef(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     file = models.FileField(upload_to='uploads/')
 
     def __str__(self):
@@ -10,7 +18,8 @@ class FileRef(models.Model):
 
 
 class UserContext(models.Model):
-    user = models.OneToOneField(get_user_model(), on_delete=models.CASCADE, related_name='context')
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='context')
     persona = models.CharField(max_length=20)
     goal = models.CharField(max_length=100)
     deadline = models.DateField()
@@ -36,7 +45,8 @@ class UserContext(models.Model):
 
 
 class TeacherContext(models.Model):
-    user = models.OneToOneField(get_user_model(), on_delete=models.CASCADE, related_name='teacher_context')
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='teacher_context')
     subjects = models.JSONField(default=list)
     grades = models.JSONField(default=list)
     curricular_alignment = models.TextField()
@@ -53,7 +63,8 @@ class TeacherContext(models.Model):
 
 
 class SeedsForAI(models.Model):
-    user = models.OneToOneField(get_user_model(), on_delete=models.CASCADE, related_name='seeds')
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='seeds')
     plan_seed = models.TextField()
     quiz_seed = models.TextField()
     fsrs_seed = models.TextField()
