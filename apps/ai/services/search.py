@@ -1,7 +1,7 @@
 from django.db.models import F
 from pgvector.django import CosineDistance
-from rag.models import Chunk
-from rag.services.embedding import embed_one
+from ai.models import Chunk
+from ai.services.embedding import embed_one
 
 
 def semantic_search(query: str, k: int = 5):

@@ -15,7 +15,7 @@
 ├── poetry.lock
 ├── project.tree
 ├── pyproject.toml
-├── rag
+├── ai
 │   ├── __init__.py
 │   ├── admin.py
 │   ├── apps.py

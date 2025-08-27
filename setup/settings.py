@@ -27,7 +27,7 @@ INSTALLED_APPS = [
     'django.contrib.postgres',
     'rest_framework',
     'accounts',
-    'rag'
+    'ai'
 ]
 
 MIDDLEWARE = [
