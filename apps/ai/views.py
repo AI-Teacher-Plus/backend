@@ -4,8 +4,15 @@ from rest_framework.response import Response
 from rest_framework import status, permissions
 from django.db import transaction
 from django.http import StreamingHttpResponse
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes # Import extend_schema and OpenApiParameter
 from .models import Document, Chunk
-from .serializers import DocumentIngestSerializer, ChatRequestSerializer
+from .serializers import (
+    DocumentIngestSerializer,
+    ChatRequestSerializer,
+    DocumentIngestResponseSerializer,
+    SearchResultSerializer,
+    ChatResponseSerializer
+)
 from .services.chat import chat_once, chat_stream
 from .services.embedding import embed_batch
 from .services.search import semantic_search
@@ -24,6 +31,12 @@ def simple_chunk(text: str, max_chars=1200):
 class IndexDocumentView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        operation_id="indexDocument",
+        request=DocumentIngestSerializer,
+        responses={201: DocumentIngestResponseSerializer, 400: DocumentIngestSerializer},
+        description="Ingests a document, chunks it, embeds the chunks, and stores them."
+    )
     @transaction.atomic
     def post(self, request):
         s = DocumentIngestSerializer(data=request.data)
@@ -49,6 +62,16 @@ class IndexDocumentView(APIView):
 
 class SearchView(APIView): 
     permission_classes = [permissions.IsAuthenticated] 
+
+    @extend_schema(
+        operation_id="searchDocuments",
+        parameters=[
+            OpenApiParameter(name='q', type=OpenApiTypes.STR, description='Search query', required=True),
+            OpenApiParameter(name='k', type=OpenApiTypes.INT, description='Number of results to return', default=5),
+        ],
+        responses={200: SearchResultSerializer(many=True), 400: {'description': 'Missing query parameter'}},
+        description="Performs a semantic search based on the query."
+    )
     def get(self, request): 
         q = request.query_params.get("q", "") 
         k = int(request.query_params.get("k", "5")) 
@@ -61,6 +84,12 @@ class SearchView(APIView):
 class ChatView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        operation_id="chatWithAI",
+        request=ChatRequestSerializer,
+        responses={200: ChatResponseSerializer, 400: ChatRequestSerializer},
+        description="Sends a chat message and receives a response."
+    )
     def post(self, request):
         s = ChatRequestSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -75,6 +104,12 @@ def sse_format(data: str) -> str:
 class ChatSSEView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        operation_id="streamChatWithAI",
+        request=ChatRequestSerializer,
+        responses={200: {'description': 'Server-Sent Events stream of chat response'}},
+        description="Establishes a Server-Sent Events (SSE) connection for streaming chat responses."
+    )
     def post(self, request):
         s = ChatRequestSerializer(data=request.data)
         s.is_valid(raise_exception=True)

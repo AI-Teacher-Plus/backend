@@ -1,5 +1,5 @@
 from google.genai import types
-from accounts.serializers import UserContextSerializer
+from apps.accounts.serializers import UserContextSerializer
 
 
 # JSON Schema mínimo do UserContext

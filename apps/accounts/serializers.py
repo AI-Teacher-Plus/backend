@@ -1,9 +1,22 @@
 from django.contrib.auth import get_user_model
-from apps.accountsmodels import UserContext
+from apps.accounts.models import UserContext
 from rest_framework import serializers
 
 
 User = get_user_model()
+
+
+class LoginSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField()
+
+
+class LoginResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+
+
+class RefreshResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()
 
 
 class UserSerializer(serializers.ModelSerializer):
