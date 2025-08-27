@@ -1,6 +1,8 @@
 .
 ├── README.md
 ├── accounts
+│   ├── __pycache__
+│   │   └── models.cpython-313.pyc
 │   ├── authentication.py
 │   ├── migrations
 │   │   └── 0001_initial.py
@@ -9,17 +11,31 @@
 │   ├── urls.py
 │   └── views.py
 ├── compose.yml
-├── initial.diff
 ├── manage.py
 ├── poetry.lock
-├── postgres-init
-│   └── 01_pgvector.sql
 ├── project.tree
 ├── pyproject.toml
+├── rag
+│   ├── __init__.py
+│   ├── admin.py
+│   ├── apps.py
+│   ├── migrations
+│   │   ├── 0001_initial.py
+│   │   └── __init__.py
+│   ├── models.py
+│   ├── serializers.py
+│   ├── services
+│   │   ├── embedding.py
+│   │   └── search.py
+│   ├── tests.py
+│   ├── urls.py
+│   └── views.py
 └── setup
+    ├── __pycache__
+    │   └── settings.cpython-313.pyc
     ├── asgi.py
     ├── settings.py
     ├── urls.py
     └── wsgi.py
 
-5 directories, 18 files
+9 directories, 30 files

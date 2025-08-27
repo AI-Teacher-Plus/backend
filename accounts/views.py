@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .serializers import UserSerializer
+from .serializers import UserContextSerializer, UserSerializer
 
 User = get_user_model()
 
@@ -89,3 +89,12 @@ class UserDetailView(APIView):
         user = self.get_object(pk)
         user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+    
+
+class UserContextView(APIView):
+    def post(self, request):
+        ctx = getattr(request.user, "context", None)
+        serializer = UserContextSerializer(instance=ctx, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        obj = serializer.save(user=request.user)
+        return Response(UserContextSerializer(obj).data, status=status.HTTP_200_OK)

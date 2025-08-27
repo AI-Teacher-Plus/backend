@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from accounts.models import UserContext
 from rest_framework import serializers
 
 
@@ -30,3 +31,9 @@ class UserSerializer(serializers.ModelSerializer):
             instance.set_password(password)
         instance.save()
         return instance
+
+
+class UserContextSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserContext
+        exclude = ["id", "user"]

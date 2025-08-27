@@ -1,35 +1,25 @@
 services:
   db:
-    image: ankane/pgvector:latest  # Postgres com pgvector embutido
+    image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_DB: teacherplus
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./postgres-init:/docker-entrypoint-initdb.d  # scripts init
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d teacherplus"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
 
   web:
     build: .
-    command: >
-      sh -c "
-      python manage.py migrate &&
-      python manage.py runserver 0.0.0.0:8000
-      "
     env_file:
       - .env
     ports:
       - "8000:8000"
     depends_on:
-      db:
-        condition: service_healthy
+      - db
+    volumes:
+      - .:/app  # não colocar isso em prod
 
 volumes:
   pgdata:
