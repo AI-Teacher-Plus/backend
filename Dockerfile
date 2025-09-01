@@ -1,27 +1,24 @@
+# Dockerfile
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POETRY_VERSION=1.8.3
+    PIP_NO_CACHE_DIR=1 \
+    POETRY_VERSION=2.1.4 \
+    POETRY_VIRTUALENVS_CREATE=false
+
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     build-essential gcc libpq-dev \
+#  && rm -rf /var/lib/apt/lists/*
+
+# Instala Poetry sem depender de curl
+RUN pip install "poetry==${POETRY_VERSION}"
 
 WORKDIR /app
+COPY pyproject.toml poetry.lock* ./
+RUN poetry install --no-root --no-interaction --no-ansi
+RUN poetry run python manage.py migrate
 
-# deps de sistema (opt por enquanto)
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     build-essential curl libpq-dev git && rm -rf /var/lib/apt/lists/*
-
-# poetry
-RUN curl -sSL https://install.python-poetry.org | python3 - && \
-    ln -s /root/.local/bin/poetry /usr/local/bin/poetry && \
-    poetry config virtualenvs.create false
-
-# instalar deps antes de copiar o projeto (cache)
-COPY pyproject.toml poetry.lock* /app/
-RUN poetry install --no-interaction --no-ansi
-
-# copiar código
-COPY . /app
-
+COPY . .
 EXPOSE 8000
-
-CMD ["bash", "-lc", "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

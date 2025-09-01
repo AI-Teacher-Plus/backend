@@ -19,7 +19,7 @@ services:
     depends_on:
       - db
     volumes:
-      - .:/app  # não colocar isso em prod
+      - .:/app
 
 volumes:
   pgdata:

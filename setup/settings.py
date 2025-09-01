@@ -22,6 +22,8 @@ ALLOWED_HOSTS = (
     else []
 )
 
+CORS_ALLOWED_ORIGINS= os.getenv("DJANGO_ALLOWED_ORIGINS", "").split(",")
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -30,6 +32,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.postgres",
+    "corsheaders",
     "rest_framework",
     "drf_spectacular",  # Added for OpenAPI schema generation
     "apps.accounts",
@@ -37,6 +40,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",

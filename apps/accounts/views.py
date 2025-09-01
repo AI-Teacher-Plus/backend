@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework_simplejwt.tokens import RefreshToken
-from drf_spectacular.utils import extend_schema # Import extend_schema
+from drf_spectacular.utils import extend_schema
 
 from .serializers import (
     UserContextSerializer,
@@ -156,3 +156,4 @@ class UserContextView(APIView):
         serializer.is_valid(raise_exception=True)
         obj = serializer.save(user=request.user)
         return Response(UserContextSerializer(obj).data, status=status.HTTP_200_OK)
+    
