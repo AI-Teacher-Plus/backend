@@ -33,19 +33,5 @@ class Migration(migrations.Migration):
                     ),
                 ),
             ],
-            options={
-                "indexes": [
-                    migrations.AddIndex(
-                        model_name="chunk",
-                        index=HnswIndex(
-                            name="rag_chunk_embedding_hnsw_idx",
-                            fields=["embedding"],
-                            m=16,
-                            ef_construction=64,
-                            opclasses=["vector_cosine_ops"],
-                        ),
-                    ),
-                ]
-            },
         ),
     ]

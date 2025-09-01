@@ -35,8 +35,8 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "drf_spectacular",  # Added for OpenAPI schema generation
-    "apps.accounts",
-    "apps.ai",
+    "apps.accounts.apps.AccountsConfig",
+    "apps.ai.apps.AIConfig",
 ]
 
 MIDDLEWARE = [
