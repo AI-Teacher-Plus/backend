@@ -13,6 +13,7 @@ class LoginSerializer(serializers.Serializer):
 
 class LoginResponseSerializer(serializers.Serializer):
     detail = serializers.CharField()
+    has_user_context = serializers.BooleanField()
 
 
 class RefreshResponseSerializer(serializers.Serializer):

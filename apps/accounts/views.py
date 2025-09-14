@@ -30,9 +30,10 @@ class LoginView(APIView):
         password = request.data.get('password')
         user = authenticate(username=username, password=password)
         if not user:
-            return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response({'detail': 'Invalid credentials', 'has_user_context': False}, status=status.HTTP_401_UNAUTHORIZED)
         refresh = RefreshToken.for_user(user)
-        response = Response({'detail': 'Login successful'})
+        has_user_context = hasattr(user, 'context') and user.context is not None
+        response = Response({'detail': 'Login successful', 'has_user_context': has_user_context})
         response.set_cookie('access_token', str(refresh.access_token), httponly=True)
         response.set_cookie('refresh_token', str(refresh), httponly=True)
         return response
@@ -97,8 +98,11 @@ class UserListCreateView(APIView):
     def post(self, request):
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            user = serializer.save()
+            has_user_context = hasattr(user, 'context') and user.context is not None
+            response_data = serializer.data
+            response_data['has_user_context'] = has_user_context
+            return Response(response_data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 

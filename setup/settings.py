@@ -25,6 +25,7 @@ ALLOWED_HOSTS = (
 CORS_ALLOWED_ORIGINS= os.getenv("DJANGO_ALLOWED_ORIGINS", "").split(",")
 
 INSTALLED_APPS = [
+    "apps.accounts.apps.AccountsConfig",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -35,7 +36,6 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "drf_spectacular",  # Added for OpenAPI schema generation
-    "apps.accounts.apps.AccountsConfig",
     "apps.ai.apps.AIConfig",
 ]
 
