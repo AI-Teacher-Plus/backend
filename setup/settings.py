@@ -22,7 +22,9 @@ ALLOWED_HOSTS = (
     else []
 )
 
-CORS_ALLOWED_ORIGINS= os.getenv("DJANGO_ALLOWED_ORIGINS", "").split(",")
+CORS_ALLOWED_ORIGINS = os.getenv("DJANGO_ALLOWED_ORIGINS", "").split(",")
+
+CORS_ALLOW_CREDENTIALS = DEBUG == False
 
 INSTALLED_APPS = [
     "apps.accounts.apps.AccountsConfig",
@@ -137,6 +139,7 @@ REST_FRAMEWORK = {
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "AUTH_COOKIE_SAMESITE": "None"
 }
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")

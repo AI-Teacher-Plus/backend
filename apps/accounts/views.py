@@ -7,7 +7,8 @@ from drf_spectacular.utils import extend_schema
 
 from .serializers import (
     UserContextSerializer,
-    UserSerializer,
+    UserReadSerializer,
+    UserWriteSerializer,
     LoginSerializer,
     LoginResponseSerializer,
     RefreshResponseSerializer
@@ -28,14 +29,17 @@ class LoginView(APIView):
     def post(self, request):
         username = request.data.get('username')
         password = request.data.get('password')
+        print(f"Login attempt: username={username}, password_length={len(password) if password else 0}")  # Debug
         user = authenticate(username=username, password=password)
         if not user:
+            print("Authentication failed: user not found or password incorrect")  # Debug
             return Response({'detail': 'Invalid credentials', 'has_user_context': False}, status=status.HTTP_401_UNAUTHORIZED)
+        print(f"Authentication successful for user: {user}")  # Debug
         refresh = RefreshToken.for_user(user)
         has_user_context = hasattr(user, 'context') and user.context is not None
         response = Response({'detail': 'Login successful', 'has_user_context': has_user_context})
-        response.set_cookie('access_token', str(refresh.access_token), httponly=True)
-        response.set_cookie('refresh_token', str(refresh), httponly=True)
+        response.set_cookie('access_token', str(refresh.access_token), httponly=True, samesite='None', secure=True)
+        response.set_cookie('refresh_token', str(refresh), httponly=True, samesite='None', secure=True)
         return response
 
 
@@ -55,7 +59,7 @@ class RefreshView(APIView):
         refresh = RefreshToken(token)
         access = refresh.access_token
         response = Response({'detail': 'Token refreshed'})
-        response.set_cookie('access_token', str(access), httponly=True)
+        response.set_cookie('access_token', str(access), httponly=True, samesite='None', secure=True)
         return response
 
 
@@ -77,35 +81,36 @@ class UserListCreateView(APIView):
     def get_permissions(self):
         if self.request.method == 'POST':
             return [permissions.AllowAny()]
-        return [permissions.IsAuthenticated()]
+        return [permissions.IsAdminUser()]
 
     @extend_schema(
         operation_id="listUsers",
-        responses={200: UserSerializer(many=True)},
+        responses={200: UserReadSerializer(many=True)},
         description="Retrieves a list of all users."
     )
     def get(self, request):
         users = User.objects.all()
-        serializer = UserSerializer(users, many=True)
+        serializer = UserReadSerializer(users, many=True)
         return Response(serializer.data)
 
     @extend_schema(
         operation_id="createUser",
-        request=UserSerializer,
-        responses={201: UserSerializer, 400: UserSerializer},
+        request=UserWriteSerializer,
+        responses={201: UserReadSerializer, 400: UserWriteSerializer},
         description="Creates a new user."
     )
     def post(self, request):
-        serializer = UserSerializer(data=request.data)
+        serializer = UserWriteSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
             has_user_context = hasattr(user, 'context') and user.context is not None
-            response_data = serializer.data
+            response_serializer = UserReadSerializer(user)
+            response_data = response_serializer.data
             response_data['has_user_context'] = has_user_context
             return Response(response_data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
+# TODO: adicionar validação por permissão para endpoints sensíveis
 class UserDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -114,26 +119,27 @@ class UserDetailView(APIView):
 
     @extend_schema(
         operation_id="retrieveUser",
-        responses={200: UserSerializer},
+        responses={200: UserReadSerializer},
         description="Retrieves details of a specific user."
     )
     def get(self, request, pk):
         user = self.get_object(pk)
-        serializer = UserSerializer(user)
+        serializer = UserReadSerializer(user)
         return Response(serializer.data)
 
     @extend_schema(
         operation_id="updateUser",
-        request=UserSerializer,
-        responses={200: UserSerializer, 400: UserSerializer},
+        request=UserWriteSerializer,
+        responses={200: UserReadSerializer, 400: UserWriteSerializer},
         description="Updates details of a specific user."
     )
     def put(self, request, pk):
         user = self.get_object(pk)
-        serializer = UserSerializer(user, data=request.data, partial=True)
+        serializer = UserWriteSerializer(user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            return Response(serializer.data)
+            response_serializer = UserReadSerializer(user)
+            return Response(response_serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @extend_schema(
