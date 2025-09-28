@@ -1,4 +1,7 @@
 import os
+import json
+import logging
+from datetime import datetime
 from typing import Optional, Iterable
 from google import genai
 from google.genai import types
@@ -114,11 +117,23 @@ def generate(
     schema: Optional[dict] = None,
     tools: Optional[list[types.Tool]] = None,
     stream: bool = False,
+    session_id: str = None,
 ):
     """
     Geração unificada com/sem streaming.
     - Para streaming, use generate_content_stream(...) e itere .text dos chunks.
     """
+    if session_id:
+        print(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "event": "generate_call",
+            "model": CHAT_MODEL,
+            "contents_count": len(contents),
+            "stream": stream,
+            "has_tools": tools is not None,
+            "has_schema": schema is not None
+        }))
     cfg = make_generate_config(
         schema=schema,
         tools=tools,
@@ -130,11 +145,21 @@ def generate(
             contents=contents,
             config=cfg,
         )
-    return client.models.generate_content(
+    resp = client.models.generate_content(
         model=CHAT_MODEL,
         contents=contents,
         config=cfg,
     )
+    if session_id:
+        text = getattr(resp, "text", "")
+        print(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "event": "generate_response",
+            "text_length": len(text),
+            "has_candidates": bool(getattr(resp, "candidates", None))
+        }))
+    return resp
 
 
 def stream_text(

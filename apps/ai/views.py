@@ -1,4 +1,8 @@
 import uuid
+import json
+import logging
+import time
+from datetime import datetime
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -93,15 +97,35 @@ class ChatView(APIView):
     def post(self, request):
         s = ChatRequestSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        print(f"Chat request: user={request.user}, messages_count={len(s.validated_data['messages'])}")  # Debug
-        reply = chat_once(request.user, s.validated_data["messages"])
-        print(f"Chat response: reply_length={len(reply)}")  # Debug
+        session_id = str(uuid.uuid4())
+        print(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "level": "INFO",
+            "session_id": session_id,
+            "event": "chat_request",
+            "user": str(request.user),
+            "messages_count": len(s.validated_data['messages']),
+            "messages": s.validated_data['messages']
+        }))
+        reply = chat_once(request.user, s.validated_data["messages"], session_id)
+        logging.info(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "level": "INFO",
+            "session_id": session_id,
+            "event": "chat_response",
+            "reply_length": len(reply),
+            "reply": reply
+        }))
         return Response({"reply": reply}, status=status.HTTP_200_OK)
     
 
 def sse_format(data: str) -> str:
-    # cada "evento" precisa terminar com \n\n
-    return f"data: {data}\n\n"
+    # Quebra o payload em linhas e escreve "data: " em cada uma
+    # Evento SSE termina com uma linha em branco.
+    lines = data.splitlines()
+    if not lines:
+        return "data: \n\n"
+    return "".join(f"data: {ln}\n" for ln in lines) + "\n"
 
 class ChatSSEView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -115,10 +139,24 @@ class ChatSSEView(APIView):
     def post(self, request):
         s = ChatRequestSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        print(f"Chat SSE request: user={request.user}, messages_count={len(s.validated_data['messages'])}")  # Debug
+        session_id = str(uuid.uuid4())
+        print(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "level": "INFO",
+            "session_id": session_id,
+            "event": "chat_sse_request",
+            "user": str(request.user),
+            "messages_count": len(s.validated_data['messages']),
+            "messages": s.validated_data['messages']
+        }))
         # chat_stream já emite strings (chunk.text); ideal para SSE
-        gen = chat_stream(request.user, s.validated_data["messages"])
-        print("Starting SSE stream")  # Debug
+        gen = chat_stream(request.user, s.validated_data["messages"], session_id)
+        print(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "level": "INFO",
+            "session_id": session_id,
+            "event": "starting_sse_stream"
+        }))
 
         def event_source():
             yield "retry: 1000\n\n"  # client auto-reconnect hint
@@ -126,11 +164,27 @@ class ChatSSEView(APIView):
                 token_count = 0
                 for token in gen:
                     token_count += 1
-                    print(f"SSE token {token_count}: {token[:50]}...")  # Debug first 50 chars
+                    print(json.dumps({
+                        "timestamp": datetime.now().isoformat(),
+                        "session_id": session_id,
+                        "event": "sse_token",
+                        "token_count": token_count,
+                        "token_preview": token[:50]
+                    }))
                     yield sse_format(token)
-                print(f"SSE stream completed: total_tokens={token_count}")  # Debug
+                print(json.dumps({
+                    "timestamp": datetime.now().isoformat(),
+                    "session_id": session_id,
+                    "event": "sse_stream_completed",
+                    "total_tokens": token_count
+                }))
             except Exception as e:
-                print(f"SSE stream error: {e}")  # Debug
+                print(json.dumps({
+                    "timestamp": datetime.now().isoformat(),
+                    "session_id": session_id,
+                    "event": "sse_stream_error",
+                    "error": str(e)
+                }))
                 yield sse_format(f"[stream-error] {e}")
 
         resp = StreamingHttpResponse(event_source(), content_type="text/event-stream")

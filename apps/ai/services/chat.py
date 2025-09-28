@@ -1,4 +1,9 @@
 from typing import Generator
+import json
+import logging
+import time
+import os
+from datetime import datetime
 from google.genai import types
 from apps.ai.client import generate, make_tools
 from apps.ai.tools.commit_user_context import function_declarations, handle_tool_call
@@ -30,6 +35,15 @@ SYSTEM = (
 )
 
 
+STREAM_CHUNK_CHARS = int(os.getenv("AI_STREAM_CHUNK", "10"))
+STREAM_DELAY_MS    = int(os.getenv("AI_STREAM_DELAY_MS", "22"))
+
+
+def _chunk_text(s: str, n: int = STREAM_CHUNK_CHARS):
+    for i in range(0, len(s), n):
+        yield s[i:i+n]
+
+
 def _make_history(messages: list[dict]) -> list[types.Content]:
     """
     messages: [{"role":"user"|"assistant"|"system","content":"..."}]
@@ -53,13 +67,50 @@ def _extract_function_calls(resp) -> list[types.FunctionCall]:
     return calls
 
 
-def chat_once(user, messages: list[dict]) -> str:
+def chat_once(user, messages: list[dict], session_id: str = None) -> str:
+    if session_id:
+        logging.info(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "event": "chat_once_start",
+            "messages": messages
+        }))
     tools = make_tools(function_declarations())
+    hist = _make_history(messages)
+    if session_id:
+        print(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "event": "history_built",
+            "system_prompt": SYSTEM,
+            "history": [
+                {
+                    "role": c.role,
+                    "parts": [{"text": p.text} for p in c.parts if hasattr(p, 'text')]
+                } for c in hist
+            ]
+        }))
     # 1ª rodada: modelo pode propor chamadas de função
-    resp = generate(contents=_make_history(messages), tools=tools, stream=False)
+    resp = generate(contents=hist, tools=tools, stream=False, session_id=session_id)
 
     calls = _extract_function_calls(resp)
+    if session_id:
+        text = getattr(resp, "text", "")
+        logging.info(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "event": "initial_response",
+            "text": text,
+            "has_candidates": bool(getattr(resp, "candidates", None))
+        }))
     while calls:
+        if session_id:
+            logging.info(json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "event": "function_calls_detected",
+                "calls": [{"name": c.name, "args": dict(c.args or {})} for c in calls]
+            }))
         # Executa cada call e envia function_response de volta
         out_parts: list[types.Part] = []
         for call in calls:
@@ -73,20 +124,48 @@ def chat_once(user, messages: list[dict]) -> str:
             resp.candidates[0].content,  # conteúdo do modelo com function_call
             types.Content(role="user", parts=out_parts),
         ]
-        resp = generate(contents=follow_up, tools=tools, stream=False)
+        if session_id:
+            logging.info(json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "event": "follow_up_prompt",
+                "follow_up_summary": f"previous content + {len(out_parts)} function responses"
+            }))
+        resp = generate(contents=follow_up, tools=tools, stream=False, session_id=session_id)
         calls = _extract_function_calls(resp)
 
     # resposta final em texto
     return getattr(resp, "text", "") or ""
 
 
-def chat_stream(user, messages: list[dict]) -> Generator[str, None, None]:
+def chat_stream(user, messages: list[dict], session_id: str = None) -> Generator[str, None, None]:
     """
     Streaming de texto (SSE-friendly). Por simplicidade, não streamamos a etapa de tool;
     executamos tools primeiro (se houver) e depois streamamos a continuação.
     """
+    if session_id:
+        logging.info(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "event": "chat_stream_start",
+            "messages": messages
+        }))
     tools = make_tools(function_declarations())
-    resp = generate(contents=_make_history(messages), tools=tools, stream=False)
+    hist = _make_history(messages)
+    if session_id:
+        logging.info(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "event": "stream_history_built",
+            "system_prompt": SYSTEM,
+            "history": [
+                {
+                    "role": c.role,
+                    "parts": [{"text": p.text} for p in c.parts if hasattr(p, 'text')]
+                } for c in hist
+            ]
+        }))
+    resp = generate(contents=hist, tools=tools, stream=False, session_id=session_id)
     calls = _extract_function_calls(resp)
     committed = False
     while calls:
@@ -100,7 +179,7 @@ def chat_stream(user, messages: list[dict]) -> Generator[str, None, None]:
             resp.candidates[0].content,
             types.Content(role="user", parts=out_parts),
         ]
-        resp = generate(contents=follow_up, tools=tools, stream=False)
+        resp = generate(contents=follow_up, tools=tools, stream=False, session_id=session_id)
         calls = _extract_function_calls(resp)
 
     # se contexto foi committed, gerar plano de estudos
@@ -110,13 +189,35 @@ def chat_stream(user, messages: list[dict]) -> Generator[str, None, None]:
             resp.candidates[0].content,  # mantém a última resposta do modelo
             types.Content(role="user", parts=[types.Part(text=plan_prompt)]),
         ]
-        stream = generate(contents=plan_contents, stream=True)  # stream chunks
+        if session_id:
+            print(json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "event": "plan_prompt_assembled",
+                "plan_prompt": plan_prompt,
+                "plan_contents_count": len(plan_contents)
+            }))
+        stream = generate(contents=plan_contents, stream=True, session_id=session_id)  # stream chunks
+        for chunk in stream:
+            t = getattr(chunk, "text", None)
+            if t:
+                yield t
+                if STREAM_DELAY_MS:
+                    time.sleep(STREAM_DELAY_MS / 1000.0)
     else:
-        # agora peça streaming do texto final
-        continue_content = types.Content(role="user", parts=[types.Part(text="continue")])
-        stream = generate(contents=[continue_content], stream=True)
-
-    for chunk in stream:
-        t = getattr(chunk, "text", None)
-        if t:
-            yield t
+        # NADA de "continue": stream o texto final que você já tem
+        final_text = getattr(resp, "text", "") or ""
+        if not final_text:
+            # fallback defensivo: pelo menos não quebra
+            final_text = "Desculpe, não consegui gerar a mensagem."
+        if session_id:
+            print(json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "event": "final_text_streaming",
+                "final_text_length": len(final_text)
+            }))
+        for piece in _chunk_text(final_text):
+            yield piece
+            if STREAM_DELAY_MS:
+                time.sleep(STREAM_DELAY_MS / 1000.0)
