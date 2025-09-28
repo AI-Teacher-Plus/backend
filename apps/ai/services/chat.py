@@ -34,11 +34,11 @@ def _make_history(messages: list[dict]) -> list[types.Content]:
     """
     messages: [{"role":"user"|"assistant"|"system","content":"..."}]
     """
-    hist: list[types.Content] = [types.Content(role="user", parts=[types.Part.from_text(SYSTEM)])]
+    hist: list[types.Content] = [types.Content(role="user", parts=[types.Part(text=SYSTEM)])]
     role_map = {"user": "user", "assistant": "model", "system": "user"}
     for m in messages:
         role = role_map.get(m.get("role","user"), "user")
-        hist.append(types.Content(role=role, parts=[types.Part.from_text(m.get("content",""))]))
+        hist.append(types.Content(role=role, parts=[types.Part(text=m.get("content",""))]))
     return hist
 
 
@@ -55,18 +55,25 @@ def _extract_function_calls(resp) -> list[types.FunctionCall]:
 
 def chat_once(user, messages: list[dict]) -> str:
     tools = make_tools(function_declarations())
+    # 1ª rodada: modelo pode propor chamadas de função
     resp = generate(contents=_make_history(messages), tools=tools, stream=False)
 
     calls = _extract_function_calls(resp)
     while calls:
-        # executa cada call e envia function_response de volta
-        out_parts = []
+        # Executa cada call e envia function_response de volta
+        out_parts: list[types.Part] = []
         for call in calls:
             result = handle_tool_call(user, call.name, dict(call.args or {}))
             out_parts.append(types.Part.from_function_response(name=call.name, response=result))
 
-        # pede continuação com as respostas de função
-        resp = generate(contents=out_parts, tools=tools, stream=False)
+        # Pede continuação incluindo:
+        # - o conteúdo da chamada de função anterior (cand.content)
+        # - as respostas de função como um novo Content(role="user")
+        follow_up = [
+            resp.candidates[0].content,  # conteúdo do modelo com function_call
+            types.Content(role="user", parts=out_parts),
+        ]
+        resp = generate(contents=follow_up, tools=tools, stream=False)
         calls = _extract_function_calls(resp)
 
     # resposta final em texto
@@ -83,23 +90,31 @@ def chat_stream(user, messages: list[dict]) -> Generator[str, None, None]:
     calls = _extract_function_calls(resp)
     committed = False
     while calls:
-        out_parts = []
+        out_parts: list[types.Part] = []
         for call in calls:
             result = handle_tool_call(user, call.name, dict(call.args or {}))
             if call.name == "commit_user_context" and result.get("status") == "ok":
                 committed = True
             out_parts.append(types.Part.from_function_response(name=call.name, response=result))
-        resp = generate(contents=out_parts, tools=tools, stream=False)
+        follow_up = [
+            resp.candidates[0].content,
+            types.Content(role="user", parts=out_parts),
+        ]
+        resp = generate(contents=follow_up, tools=tools, stream=False)
         calls = _extract_function_calls(resp)
 
     # se contexto foi committed, gerar plano de estudos
     if committed:
         plan_prompt = "Com base no contexto do usuário recém-persistido, gere um plano de estudos inicial personalizado."
-        plan_contents = _make_history(messages) + [types.Content(role="model", parts=[types.Part.from_text(getattr(resp, "text", ""))]), types.Content(role="user", parts=[types.Part.from_text(plan_prompt)])]
-        stream = generate(contents=plan_contents, stream=True)
+        plan_contents = _make_history(messages) + [
+            resp.candidates[0].content,  # mantém a última resposta do modelo
+            types.Content(role="user", parts=[types.Part(text=plan_prompt)]),
+        ]
+        stream = generate(contents=plan_contents, stream=True)  # stream chunks
     else:
         # agora peça streaming do texto final
-        stream = generate(contents=[types.Part.from_text("continue")], stream=True)
+        continue_content = types.Content(role="user", parts=[types.Part(text="continue")])
+        stream = generate(contents=[continue_content], stream=True)
 
     for chunk in stream:
         t = getattr(chunk, "text", None)

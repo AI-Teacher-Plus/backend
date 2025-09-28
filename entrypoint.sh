@@ -24,4 +24,4 @@ PY
 poetry run python manage.py migrate --noinput
 
 # Sobe o servidor
-exec poetry run gunicorn --bind 0.0.0.0:8000 --workers 3 setup.wsgi:application
+exec poetry run gunicorn --bind 0.0.0.0:8000 --workers 3 setup.wsgi:application --capture-output --enable-stdio-inheritance

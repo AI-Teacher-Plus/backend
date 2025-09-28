@@ -19,6 +19,7 @@ User = get_user_model()
 
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     @extend_schema(
         operation_id="loginUser",
@@ -45,6 +46,7 @@ class LoginView(APIView):
 
 class RefreshView(APIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
     serializer_class = None
 
     @extend_schema(
@@ -55,12 +57,19 @@ class RefreshView(APIView):
     def post(self, request):
         token = request.COOKIES.get('refresh_token')
         if token is None:
+            print("Refresh failed: no refresh token in cookies")  # Debug
             return Response({'detail': 'No refresh token'}, status=status.HTTP_401_UNAUTHORIZED)
-        refresh = RefreshToken(token)
-        access = refresh.access_token
-        response = Response({'detail': 'Token refreshed'})
-        response.set_cookie('access_token', str(access), httponly=True, samesite='None', secure=True)
-        return response
+        print("Refresh attempt: token present")  # Debug
+        try:
+            refresh = RefreshToken(token)
+            access = refresh.access_token
+            print("Refresh successful: new access token generated")  # Debug
+            response = Response({'detail': 'Token refreshed'})
+            response.set_cookie('access_token', str(access), httponly=True, samesite='None', secure=True)
+            return response
+        except Exception as e:
+            print(f"Refresh failed: invalid token - {e}")  # Debug
+            return Response({'detail': 'Invalid refresh token'}, status=status.HTTP_401_UNAUTHORIZED)
 
 
 class LogoutView(APIView):
@@ -71,6 +80,7 @@ class LogoutView(APIView):
         description="Logs out the user by deleting access and refresh token cookies."
     )
     def post(self, request):
+        print(f"Logout: user={request.user if request.user.is_authenticated else 'anonymous'}")  # Debug
         response = Response({'detail': 'Logged out'}, status=status.HTTP_200_OK)
         response.delete_cookie('access_token')
         response.delete_cookie('refresh_token')
@@ -78,6 +88,8 @@ class LogoutView(APIView):
 
 
 class UserListCreateView(APIView):
+    authentication_classes = []
+
     def get_permissions(self):
         if self.request.method == 'POST':
             return [permissions.AllowAny()]
@@ -100,14 +112,17 @@ class UserListCreateView(APIView):
         description="Creates a new user."
     )
     def post(self, request):
+        print(f"User registration attempt: data={request.data}")  # Debug
         serializer = UserWriteSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
             has_user_context = hasattr(user, 'context') and user.context is not None
+            print(f"User created: {user.username}, has_context={has_user_context}")  # Debug
             response_serializer = UserReadSerializer(user)
             response_data = response_serializer.data
             response_data['has_user_context'] = has_user_context
             return Response(response_data, status=status.HTTP_201_CREATED)
+        print(f"User registration failed: errors={serializer.errors}")  # Debug
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # TODO: adicionar validação por permissão para endpoints sensíveis
@@ -123,6 +138,7 @@ class UserDetailView(APIView):
         description="Retrieves details of a specific user."
     )
     def get(self, request, pk):
+        print(f"User detail get: requester={request.user}, pk={pk}")  # Debug
         user = self.get_object(pk)
         serializer = UserReadSerializer(user)
         return Response(serializer.data)
@@ -134,12 +150,15 @@ class UserDetailView(APIView):
         description="Updates details of a specific user."
     )
     def put(self, request, pk):
+        print(f"User detail put: requester={request.user}, pk={pk}, data={request.data}")  # Debug
         user = self.get_object(pk)
         serializer = UserWriteSerializer(user, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+            print(f"User updated: {user}")  # Debug
             response_serializer = UserReadSerializer(user)
             return Response(response_serializer.data)
+        print(f"User update failed: errors={serializer.errors}")  # Debug
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @extend_schema(
@@ -148,8 +167,10 @@ class UserDetailView(APIView):
         description="Deletes a specific user."
     )
     def delete(self, request, pk):
+        print(f"User detail delete: requester={request.user}, pk={pk}")  # Debug
         user = self.get_object(pk)
         user.delete()
+        print(f"User deleted: {pk}")  # Debug
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -161,9 +182,25 @@ class UserContextView(APIView):
         description="Updates or creates user context information."
     )
     def post(self, request):
+        print(f"User context update: user={request.user}, data={request.data}")  # Debug
         ctx = getattr(request.user, "context", None)
         serializer = UserContextSerializer(instance=ctx, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         obj = serializer.save(user=request.user)
+        print(f"User context updated: {obj}")  # Debug
         return Response(UserContextSerializer(obj).data, status=status.HTTP_200_OK)
+
+
+class MeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="getCurrentUser",
+        responses={200: UserReadSerializer},
+        description="Retrieves the current authenticated user's data."
+    )
+    def get(self, request):
+        print(f"Me endpoint: user={request.user}")  # Debug
+        serializer = UserReadSerializer(request.user)
+        return Response(serializer.data)
     
