@@ -118,14 +118,11 @@ class ChatView(APIView):
         }))
         return Response({"reply": reply}, status=status.HTTP_200_OK)
     
-
 def sse_format(data: str) -> str:
-    # Quebra o payload em linhas e escreve "data: " em cada uma
-    # Evento SSE termina com uma linha em branco.
-    lines = data.splitlines()
-    if not lines:
-        return "data: \n\n"
-    return "".join(f"data: {ln}\n" for ln in lines) + "\n"
+    # Preserva TUDO, inclusive newline final, gerando uma linha "data:" por linha do payload.
+    # Ex.: "*\n" -> "data: *\n" + "data: \n" (a segunda representa a quebra real de linha)
+    lines = data.split("\n")  # NÃO usar splitlines(); split("\n") preserva linha vazia ao final
+    return "".join(f"data: {ln}\n" for ln in lines) + "\n"  # linha em branco final = fim do evento
 
 class ChatSSEView(APIView):
     permission_classes = [permissions.IsAuthenticated]
