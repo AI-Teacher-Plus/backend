@@ -92,7 +92,13 @@ class ChatView(APIView):
         operation_id="chatWithAI",
         request=ChatRequestSerializer,
         responses={200: ChatResponseSerializer, 400: ChatRequestSerializer},
-        description="Sends a chat message and receives a response."
+        description="""
+        Envia uma mensagem de chat e recebe uma resposta completa (não-streaming).
+
+        **Uso**: Para respostas rápidas ou quando streaming não é necessário.
+        **Limitações**: Não suporta tool calls interativos ou geração de plano de estudos.
+        **Alternativa**: Use /api/ai/chat/sse/ para funcionalidades completas com streaming.
+        """
     )
     def post(self, request):
         s = ChatRequestSerializer(data=request.data)
@@ -147,7 +153,23 @@ class ChatSSEView(APIView):
         operation_id="streamChatWithAI",
         request=ChatRequestSerializer,
         responses={200: {'description': 'Server-Sent Events stream of chat response'}},
-        description="Establishes a Server-Sent Events (SSE) connection for streaming chat responses."
+        description="""
+        Estabelece uma conexão Server-Sent Events (SSE) para streaming de respostas de chat.
+
+        **Funcionalidades**:
+        - Streaming em tempo real com eventos estruturados
+        - Suporte a tool calls (ex: commit_user_context para onboarding)
+        - Geração automática de plano de estudos após commit
+        - Controle de sessão com meta-eventos
+
+        **Eventos SSE**:
+        - `meta`: Controle da sessão (started, committed, finished)
+        - `token`: Fragmentos de texto gerado
+        - `heartbeat`: Progresso durante tool calls
+        - `error`: Tratamento de erros
+
+        **Fluxo típico**: session_started → tokens (assistant_response) → [tool calls] → [plan generation] → session_finished
+        """
     )
     def post(self, request):
         s = ChatRequestSerializer(data=request.data)

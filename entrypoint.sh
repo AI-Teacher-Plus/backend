@@ -21,7 +21,14 @@ else:
 PY
 
 # Migrações
+
+poetry run python manage.py showmigrations -v 2
+
+# Migrar accounts primeiro para criar a tabela User customizada
+poetry run python manage.py migrate accounts
+
+# Depois migrar o resto
 poetry run python manage.py migrate --noinput
 
 # Sobe o servidor
-exec poetry run gunicorn --bind 0.0.0.0:8000 --workers 3 setup.wsgi:application --capture-output --enable-stdio-inheritance
+exec poetry run gunicorn --bind 0.0.0.0:8000 --workers 1 setup.wsgi:application --log-level info --access-logfile - --error-logfile - --capture-output --enable-stdio-inheritance

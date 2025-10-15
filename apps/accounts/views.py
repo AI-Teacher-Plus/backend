@@ -1,9 +1,12 @@
+import logging
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema
+
+logger = logging.getLogger(__name__)
 
 from .serializers import (
     UserContextSerializer,
@@ -112,17 +115,29 @@ class UserListCreateView(APIView):
         description="Creates a new user."
     )
     def post(self, request):
-        print(f"User registration attempt: data={request.data}")  # Debug
+        import sys
+        print(f"User registration attempt: data={request.data}", flush=True)  # Debug
+        print(f"Request method: {request.method}", flush=True)  # Debug
+        print(f"Request content type: {request.content_type}", flush=True)  # Debug
+        print(f"Request headers: {dict(request.headers)}", flush=True)  # Debug
+        sys.stdout.flush()
         serializer = UserWriteSerializer(data=request.data)
+        print(f"Serializer initial data: {serializer.initial_data}", flush=True)  # Debug
+        sys.stdout.flush()
         if serializer.is_valid():
+            print("Serializer is valid", flush=True)  # Debug
+            sys.stdout.flush()
             user = serializer.save()
             has_user_context = hasattr(user, 'context') and user.context is not None
-            print(f"User created: {user.username}, has_context={has_user_context}")  # Debug
+            print(f"User created: {user.username}, has_context={has_user_context}", flush=True)  # Debug
+            sys.stdout.flush()
             response_serializer = UserReadSerializer(user)
             response_data = response_serializer.data
             response_data['has_user_context'] = has_user_context
             return Response(response_data, status=status.HTTP_201_CREATED)
-        print(f"User registration failed: errors={serializer.errors}")  # Debug
+        print(f"User registration failed: errors={serializer.errors}", flush=True)  # Debug
+        print(f"Non field errors: {serializer.errors.get('non_field_errors', [])}", flush=True)  # Debug
+        sys.stdout.flush()
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # TODO: adicionar validação por permissão para endpoints sensíveis
@@ -227,3 +242,4 @@ class MeView(APIView):
         serializer = UserReadSerializer(request.user)
         return Response(serializer.data)
     
+

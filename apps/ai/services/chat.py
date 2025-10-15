@@ -239,7 +239,7 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
         calls = _extract_function_calls(resp)
 
     if committed:
-        plan_prompt = "Com base no contexto do usu·rio recÈm-persistido, gere um plano de estudos inicial personalizado."
+        plan_prompt = "Com base no contexto do usu√°rio rec√©m-persistido, gere um plano de estudos inicial personalizado."
         plan_contents = _make_history(messages) + [
             resp.candidates[0].content,
             types.Content(role="user", parts=[types.Part(text=plan_prompt)]),
@@ -275,7 +275,7 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
             "tokens_streamed": token_index,
         })
     else:
-        final_text = getattr(resp, "text", "") or "Desculpe, n„o consegui gerar a mensagem."
+        final_text = getattr(resp, "text", "") or "Desculpe, n√£o consegui gerar a mensagem."
         if session_id:
             print(json.dumps({
                 "timestamp": datetime.now().isoformat(),

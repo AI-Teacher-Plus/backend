@@ -1,6 +1,9 @@
+import logging
 from django.contrib.auth import get_user_model
 from apps.accounts.models import UserContext
 from rest_framework import serializers
+
+logger = logging.getLogger(__name__)
 
 
 User = get_user_model()
@@ -33,7 +36,20 @@ class UserWriteSerializer(serializers.ModelSerializer):
         model = User
         fields = ['username', 'email', 'first_name', 'last_name', 'password']
 
+    def validate_username(self, value):
+        print(f"Validating username: {value}")  # Debug
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("A user with that username already exists.")
+        return value
+
+    def validate_email(self, value):
+        print(f"Validating email: {value}")  # Debug
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with that email already exists.")
+        return value
+
     def create(self, validated_data):
+        print(f"Creating user with validated data: {validated_data}")  # Debug
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data.get('email', ''),
@@ -41,6 +57,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
             first_name=validated_data.get('first_name', ''),
             last_name=validated_data.get('last_name', ''),
         )
+        print(f"User created successfully: {user}")  # Debug
         return user
 
     def update(self, instance, validated_data):

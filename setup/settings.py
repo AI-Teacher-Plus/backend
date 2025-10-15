@@ -1,5 +1,6 @@
 from datetime import timedelta
 import os
+import logging
 from pathlib import Path
 
 try:
@@ -8,6 +9,43 @@ try:
     load_dotenv()
 except ImportError:
     pass
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'apps': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+    },
+}
 
 # Construa os caminhos dentro do projeto assim: BASE_DIR / 'pasta' (a constante aqui é o root do projeto)
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -135,6 +173,9 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": (
         "drf_spectacular.openapi.AutoSchema"
     ),
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
 }
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
