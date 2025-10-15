@@ -75,6 +75,29 @@ O sistema será lançado inicialmente como **MVP** até **novembro de 2025**, co
 
 ---
 
+## Como Montar o Ambiente
+
+### Requisitos
+- Python 3.13 instalado localmente (ou Docker 26+ com Docker Compose).
+- Poetry 2.1.4 (`pip install "poetry==2.1.4"`).
+- Banco PostgreSQL 16+ (opcional se usar Docker Compose).
+
+### Configuração local com Poetry
+1. Duplique `.env.example` para `.env` e ajuste as variáveis (ex.: `DJANGO_SECRET_KEY`, credenciais de banco, chaves da IA).
+2. Instale as dependências: `poetry install`.
+3. Rode as migrações: `poetry run python manage.py migrate`.
+4. Inicie o servidor de desenvolvimento: `poetry run python manage.py runserver 0.0.0.0:8000`.
+
+### Usando Docker Compose
+1. Garanta um arquivo `.env` com as credenciais necessárias. As variáveis `POSTGRES_*` já estão predefinidas para o compose.
+2. Suba os contêineres: `docker compose up --build`.
+3. A API ficará disponível em `http://localhost:8010` e o banco Postgres em `localhost:5433`.
+4. Logs em tempo real: `docker compose logs -f web`.
+
+> Se você estiver em Windows, prefira o Terminal WSL/WSL2 para usar o Poetry e o Docker com menos atritos de permissão.
+
+---
+
 ## 📅 Cronograma do MVP
 
 | Etapa | Tarefa | Período |
