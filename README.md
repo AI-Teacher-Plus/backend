@@ -9,7 +9,7 @@
 O **TeacherPlus** (ou **AI Teacher**) é uma plataforma **EdTech** desenvolvida por estudantes brasileiros de ensino médio, com o objetivo de **tornar o aprendizado mais acessível, inteligente e personalizado**.  
 
 A aplicação utiliza **modelos de IA (Google Gemini)** para gerar planos de estudo, flashcards, quizzes e feedbacks personalizados, baseando-se no desempenho e perfil de cada aluno.
-
+spotify
 O sistema será lançado inicialmente como **MVP** até **novembro de 2025**, com foco em provas do **ENEM** e exames preparatórios.  
 
 ---

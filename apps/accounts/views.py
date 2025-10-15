@@ -175,10 +175,31 @@ class UserDetailView(APIView):
 
 
 class UserContextView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="getUserContext",
+        responses={
+            200: UserContextSerializer,
+            404: {'description': 'User context not found'},
+        },
+        description="Retrieves the current authenticated user's context if it exists."
+    )
+    def get(self, request):
+        ctx = getattr(request.user, "context", None)
+        if ctx is None:
+            return Response({"detail": "User context not found"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = UserContextSerializer(ctx)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     @extend_schema(
         operation_id="updateUserContext",
         request=UserContextSerializer,
-        responses={200: UserContextSerializer, 400: UserContextSerializer},
+        responses={
+            200: UserContextSerializer,
+            201: UserContextSerializer,
+            400: UserContextSerializer
+        },
         description="Updates or creates user context information."
     )
     def post(self, request):
@@ -186,9 +207,11 @@ class UserContextView(APIView):
         ctx = getattr(request.user, "context", None)
         serializer = UserContextSerializer(instance=ctx, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        created = ctx is None
         obj = serializer.save(user=request.user)
         print(f"User context updated: {obj}")  # Debug
-        return Response(UserContextSerializer(obj).data, status=status.HTTP_200_OK)
+        response_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(UserContextSerializer(obj).data, status=response_status)
 
 
 class MeView(APIView):

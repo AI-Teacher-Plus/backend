@@ -1,4 +1,4 @@
-from typing import Generator
+from typing import Any, Generator
 import json
 import logging
 import time
@@ -138,10 +138,11 @@ def chat_once(user, messages: list[dict], session_id: str = None) -> str:
     return getattr(resp, "text", "") or ""
 
 
-def chat_stream(user, messages: list[dict], session_id: str = None) -> Generator[str, None, None]:
+
+def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Generator[dict[str, Any], None, None]:
     """
-    Streaming de texto (SSE-friendly). Por simplicidade, não streamamos a etapa de tool;
-    executamos tools primeiro (se houver) e depois streamamos a continuação.
+    Stream chat flow as structured events for SSE consumers.
+    Each yielded item is a dict like {"event": <str>, "data": {..}}.
     """
     if session_id:
         logging.info(json.dumps({
@@ -150,6 +151,15 @@ def chat_stream(user, messages: list[dict], session_id: str = None) -> Generator
             "event": "chat_stream_start",
             "messages": messages
         }))
+
+    def _wrap(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        data = payload.copy()
+        if session_id:
+            data.setdefault("session_id", session_id)
+        return {"event": event_type, "data": data}
+
+    yield _wrap("meta", {"type": "session_started"})
+
     tools = make_tools(function_declarations())
     hist = _make_history(messages)
     if session_id:
@@ -165,16 +175,62 @@ def chat_stream(user, messages: list[dict], session_id: str = None) -> Generator
                 } for c in hist
             ]
         }))
+
     resp = generate(contents=hist, tools=tools, stream=False, session_id=session_id)
     calls = _extract_function_calls(resp)
     committed = False
+    context_id: str | None = None
+    token_index = 0
+
     while calls:
         out_parts: list[types.Part] = []
         for call in calls:
-            result = handle_tool_call(user, call.name, dict(call.args or {}))
-            if call.name == "commit_user_context" and result.get("status") == "ok":
-                committed = True
+            yield _wrap("heartbeat", {"stage": "tool_call", "tool": call.name})
+            try:
+                result = handle_tool_call(user, call.name, dict(call.args or {}))
+            except Exception as exc:
+                error_payload = {
+                    "stage": "tool_call",
+                    "tool": call.name,
+                    "message": str(exc),
+                }
+                yield _wrap("error", error_payload)
+                yield _wrap("meta", {
+                    "type": "session_finished",
+                    "total_tokens": token_index,
+                    "committed": committed,
+                    "user_context_id": context_id,
+                    "error": error_payload,
+                })
+                return
+
+            if call.name == "commit_user_context":
+                if result.get("status") == "ok":
+                    committed = True
+                    context_id = result.get("user_context_id")
+                    yield _wrap("meta", {
+                        "type": "context_committed",
+                        "user_context_id": context_id,
+                    })
+                else:
+                    error_payload = {
+                        "stage": "tool_call",
+                        "tool": call.name,
+                        "message": "commit_user_context returned a non-ok status",
+                        "payload": result,
+                    }
+                    yield _wrap("error", error_payload)
+                    yield _wrap("meta", {
+                        "type": "session_finished",
+                        "total_tokens": token_index,
+                        "committed": committed,
+                        "user_context_id": context_id,
+                        "error": error_payload,
+                    })
+                    return
+
             out_parts.append(types.Part.from_function_response(name=call.name, response=result))
+
         follow_up = [
             resp.candidates[0].content,
             types.Content(role="user", parts=out_parts),
@@ -182,11 +238,10 @@ def chat_stream(user, messages: list[dict], session_id: str = None) -> Generator
         resp = generate(contents=follow_up, tools=tools, stream=False, session_id=session_id)
         calls = _extract_function_calls(resp)
 
-    # se contexto foi committed, gerar plano de estudos
     if committed:
-        plan_prompt = "Com base no contexto do usuário recém-persistido, gere um plano de estudos inicial personalizado."
+        plan_prompt = "Com base no contexto do usu�rio rec�m-persistido, gere um plano de estudos inicial personalizado."
         plan_contents = _make_history(messages) + [
-            resp.candidates[0].content,  # mantém a última resposta do modelo
+            resp.candidates[0].content,
             types.Content(role="user", parts=[types.Part(text=plan_prompt)]),
         ]
         if session_id:
@@ -197,19 +252,30 @@ def chat_stream(user, messages: list[dict], session_id: str = None) -> Generator
                 "plan_prompt": plan_prompt,
                 "plan_contents_count": len(plan_contents)
             }))
-        stream = generate(contents=plan_contents, stream=True, session_id=session_id)  # stream chunks
+        yield _wrap("meta", {
+            "type": "plan_generation_started",
+            "user_context_id": context_id,
+        })
+        stream = generate(contents=plan_contents, stream=True, session_id=session_id)
         for chunk in stream:
-            t = getattr(chunk, "text", None)
-            if t:
-                yield t
-                if STREAM_DELAY_MS:
-                    time.sleep(STREAM_DELAY_MS / 1000.0)
+            text_piece = getattr(chunk, "text", None)
+            if not text_piece:
+                continue
+            token_index += 1
+            yield _wrap("token", {
+                "index": token_index,
+                "stage": "study_plan",
+                "text": text_piece,
+            })
+            if STREAM_DELAY_MS:
+                time.sleep(STREAM_DELAY_MS / 1000.0)
+        yield _wrap("meta", {
+            "type": "plan_generation_completed",
+            "user_context_id": context_id,
+            "tokens_streamed": token_index,
+        })
     else:
-        # NADA de "continue": stream o texto final que você já tem
-        final_text = getattr(resp, "text", "") or ""
-        if not final_text:
-            # fallback defensivo: pelo menos não quebra
-            final_text = "Desculpe, não consegui gerar a mensagem."
+        final_text = getattr(resp, "text", "") or "Desculpe, n�o consegui gerar a mensagem."
         if session_id:
             print(json.dumps({
                 "timestamp": datetime.now().isoformat(),
@@ -218,6 +284,19 @@ def chat_stream(user, messages: list[dict], session_id: str = None) -> Generator
                 "final_text_length": len(final_text)
             }))
         for piece in _chunk_text(final_text):
-            yield piece
+            token_index += 1
+            yield _wrap("token", {
+                "index": token_index,
+                "stage": "assistant_response",
+                "text": piece,
+            })
             if STREAM_DELAY_MS:
                 time.sleep(STREAM_DELAY_MS / 1000.0)
+
+    yield _wrap("meta", {
+        "type": "session_finished",
+        "total_tokens": token_index,
+        "committed": committed,
+        "user_context_id": context_id,
+    })
+

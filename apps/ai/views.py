@@ -118,11 +118,27 @@ class ChatView(APIView):
         }))
         return Response({"reply": reply}, status=status.HTTP_200_OK)
     
-def sse_format(data: str) -> str:
-    # Preserva TUDO, inclusive newline final, gerando uma linha "data:" por linha do payload.
-    # Ex.: "*\n" -> "data: *\n" + "data: \n" (a segunda representa a quebra real de linha)
-    lines = data.split("\n")  # NÃO usar splitlines(); split("\n") preserva linha vazia ao final
-    return "".join(f"data: {ln}\n" for ln in lines) + "\n"  # linha em branco final = fim do evento
+
+
+def encode_sse(event: str, data, event_id=None) -> str:
+    """
+    Encode a server-sent event with optional name and id.
+    When data is a dict/list we JSON-encode to keep the contract consistent.
+    """
+    if isinstance(data, (dict, list)):
+        payload = json.dumps(data, ensure_ascii=False)
+    else:
+        payload = str(data)
+    lines = payload.split("\n")
+    parts = []
+    if event_id is not None:
+        parts.append(f"id: {event_id}\n")
+    if event:
+        parts.append(f"event: {event}\n")
+    parts.extend(f"data: {ln}\n" for ln in lines)
+    parts.append("\n")
+    return ''.join(parts)
+
 
 class ChatSSEView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -146,7 +162,7 @@ class ChatSSEView(APIView):
             "messages_count": len(s.validated_data['messages']),
             "messages": s.validated_data['messages']
         }))
-        # chat_stream já emite strings (chunk.text); ideal para SSE
+        # chat_stream agora emite eventos estruturados {"event": ..., "data": {...}}
         gen = chat_stream(request.user, s.validated_data["messages"], session_id)
         print(json.dumps({
             "timestamp": datetime.now().isoformat(),
@@ -156,24 +172,37 @@ class ChatSSEView(APIView):
         }))
 
         def event_source():
-            yield "retry: 1000\n\n"  # client auto-reconnect hint
+            yield "retry: 1000\n\n"
             try:
+                event_index = 0
                 token_count = 0
-                for token in gen:
-                    token_count += 1
+                for packet in gen:
+                    event_index += 1
+                    if not isinstance(packet, dict):
+                        packet = {"event": "message", "data": {"raw": packet}}
+                    event_name = packet.get("event") or "message"
+                    payload = packet.get("data", {})
+                    if event_name == "token":
+                        token_count += 1
+                        preview = str(payload.get("text", ""))[:50]
+                    else:
+                        preview = str(payload)[:50]
                     print(json.dumps({
                         "timestamp": datetime.now().isoformat(),
                         "session_id": session_id,
-                        "event": "sse_token",
+                        "event": "sse_event",
+                        "event_name": event_name,
+                        "event_index": event_index,
                         "token_count": token_count,
-                        "token_preview": token[:50]
+                        "preview": preview
                     }))
-                    yield sse_format(token)
+                    yield encode_sse(event_name, payload, event_id=event_index)
                 print(json.dumps({
                     "timestamp": datetime.now().isoformat(),
                     "session_id": session_id,
                     "event": "sse_stream_completed",
-                    "total_tokens": token_count
+                    "total_tokens": token_count,
+                    "total_events": event_index
                 }))
             except Exception as e:
                 print(json.dumps({
@@ -182,9 +211,13 @@ class ChatSSEView(APIView):
                     "event": "sse_stream_error",
                     "error": str(e)
                 }))
-                yield sse_format(f"[stream-error] {e}")
+                error_payload = {
+                    "session_id": session_id,
+                    "message": str(e),
+                }
+                yield encode_sse("error", error_payload)
 
         resp = StreamingHttpResponse(event_source(), content_type="text/event-stream")
         resp["Cache-Control"] = "no-cache"
-        resp["X-Accel-Buffering"] = "no"  # Nginx: não buferizar
+        resp["X-Accel-Buffering"] = "no"  # Nginx: nÃ£o buferizar
         return resp
