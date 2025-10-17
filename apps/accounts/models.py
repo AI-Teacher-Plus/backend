@@ -72,3 +72,98 @@ class SeedsForAI(models.Model):
 
     def __str__(self):
         return f"Seeds for {self.user}"
+
+
+class StudyPlan(models.Model):
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("active", "Active"),
+        ("archived", "Archived"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user_context = models.ForeignKey(UserContext, on_delete=models.CASCADE, related_name="study_plans")
+    title = models.CharField(max_length=200, blank=True)
+    summary = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    total_days = models.PositiveIntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+    generated_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-generated_at"]
+
+    def __str__(self):
+        return f"StudyPlan({self.user_context_id}, status={self.status})"
+
+
+class StudyDay(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("ready", "Ready"),
+        ("in_progress", "In Progress"),
+        ("completed", "Completed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    plan = models.ForeignKey(StudyPlan, on_delete=models.CASCADE, related_name="days")
+    day_index = models.PositiveIntegerField()
+    scheduled_date = models.DateField(null=True, blank=True)
+    title = models.CharField(max_length=200, blank=True)
+    focus = models.TextField(blank=True)
+    target_minutes = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    summary = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["day_index"]
+        unique_together = ("plan", "day_index")
+
+    def __str__(self):
+        return f"StudyDay({self.plan_id}, index={self.day_index})"
+
+
+class StudyTask(models.Model):
+    TASK_TYPE_CHOICES = [
+        ("lesson", "Lesson"),
+        ("practice", "Practice"),
+        ("review", "Review"),
+        ("flashcards", "Flashcards"),
+        ("assessment", "Assessment"),
+        ("project", "Project"),
+        ("other", "Other"),
+    ]
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("ready", "Ready"),
+        ("in_progress", "In Progress"),
+        ("completed", "Completed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    day = models.ForeignKey(StudyDay, on_delete=models.CASCADE, related_name="tasks")
+    order = models.PositiveIntegerField(default=1)
+    task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES, default="other")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    duration_minutes = models.PositiveIntegerField(default=0)
+    resources = models.JSONField(default=list, blank=True)
+    materials = models.ManyToManyField(FileRef, related_name="study_tasks", blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["order"]
+        unique_together = ("day", "order")
+
+    def __str__(self):
+        return f"StudyTask({self.day_id}, order={self.order}, type={self.task_type})"

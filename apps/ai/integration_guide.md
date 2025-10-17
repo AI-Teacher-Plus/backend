@@ -1,100 +1,148 @@
-# Guia de Integração - Chat AI (Streaming com Eventos)
+---
+title: Guia de Integração — Chat AI (SSE)
+---
 
-## Visão Geral
-O endpoint de chat agora suporta dois modos: resposta única (não-streaming) e streaming via Server-Sent Events (SSE) com eventos estruturados. O streaming é usado para conversas interativas, especialmente no fluxo de onboarding onde há tool calls e geração de plano de estudos.
+# Visão Geral
 
-## Modos de Operação
+O backend expõe dois modos para conversar com o assistente:
 
-### 1. Resposta Única (stream=false)
-- **Endpoint**: `POST /api/ai/chat/`
-- **Resposta**: JSON simples
-- **Formato**:
-  ```json
-  {
-    "reply": "Texto da resposta do assistente"
-  }
-  ```
+- **Resposta única** (`POST /api/ai/chat/`): obtém todo o texto de uma vez.
+- **Streaming SSE** (`POST /api/ai/chat/sse/`): envia fragmentos e eventos estruturados em tempo real, possibilitando tool calls, persistência do `UserContext` e geração do plano de estudos.
 
-### 2. Streaming SSE (stream=true)
-- **Endpoint**: `POST /api/ai/chat/sse/`
-- **Resposta**: Stream de eventos SSE
-- **Content-Type**: `text/event-stream`
+Este guia foca no fluxo SSE e descreve todos os eventos que o front-end deve tratar.
 
-## Formato dos Eventos SSE
+# Payload de Requisição
 
-Cada evento tem o formato:
-```
-event: <tipo_evento>
-data: <json_payload>
+```json
+{
+  "messages": [
+    {"role": "user", "content": "Quero criar meu perfil"}
+  ],
+  "stream": true
+}
 ```
 
-### Tipos de Eventos
+- `role`: `user`, `assistant` ou `system`.
+- Cada requisição precisa incluir o histórico anterior (conversação stateless).
+- Autenticação obrigatória via Bearer Token.
 
-#### `meta`
-Eventos de controle da sessão:
-- `session_started`: Início da sessão
-- `context_committed`: Contexto do usuário persistido (após confirmação)
-- `plan_generation_started`: Início da geração do plano de estudos
-- `plan_generation_completed`: Plano gerado com sucesso
-- `session_finished`: Fim da sessão com resumo
+# Envelope SSE
 
-#### `token`
-Pedação de texto gerado:
-- `index`: Número sequencial do token
-- `stage`: "assistant_response" ou "study_plan"
-- `text`: Fragmento de texto
+Cada mensagem segue o formato padrão do protocolo:
 
-#### `heartbeat`
-Indicador de progresso durante operações:
-- `stage`: "tool_call"
-- `tool`: Nome da ferramenta sendo executada
+```
+event: <nome_do_evento>
+data: <json>
+```
 
-#### `error`
-Erros durante o processamento:
-- `stage`: Etapa onde ocorreu o erro
-- `tool`: Ferramenta relacionada (se aplicável)
-- `message`: Descrição do erro
+O backend envia `retry: 1000` no início para orientar o client a tentar reconectar em caso de queda.
 
-## Checklist de Funcionamento
+# Eventos Disponíveis
 
-### Preparação da Requisição
-- [ ] Autenticação: Usuário logado (Bearer token)
-- [ ] Formato das mensagens: Array de objetos com `role` ("user"|"assistant"|"system") e `content` (string)
-- [ ] `stream`: true para SSE, false para resposta única
-- [ ] Exemplo payload:
-  ```json
-  {
-    "messages": [
-      {"role": "user", "content": "Olá, quero criar meu perfil"}
-    ],
-    "stream": true
-  }
-  ```
+## `meta`
 
-### Fluxo de Onboarding (Streaming)
-- [ ] Receber `meta: session_started`
-- [ ] Receber tokens com `stage: "assistant_response"` (perguntas do assistente)
-- [ ] Enviar resposta do usuário (nova requisição com histórico atualizado)
-- [ ] Se tool call: Receber `heartbeat` com `stage: "tool_call"`
-- [ ] Após commit: Receber `meta: context_committed` com `user_context_id`
-- [ ] Geração de plano: `meta: plan_generation_started`, tokens com `stage: "study_plan"`
-- [ ] Fim: `meta: session_finished` com resumo (total_tokens, committed, user_context_id)
+Eventos de controle. O campo `data.type` identifica o estágio.
 
-### Tratamento de Erros
-- [ ] Monitorar eventos `error` com detalhes do problema
-- [ ] Sessão pode terminar prematuramente com `meta: session_finished` contendo erro
-- [ ] Reconectar se necessário (SSE suporta retry)
+| type                       | Significado                                                                                                  | Payload (campos adicionais)                                      |
+|---------------------------|---------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------|
+| `session_started`         | Conexão iniciada e prompt preparado.                                                                          | `session_id`                                                     |
+| `context_committed`       | Tool `commit_user_context` executou com sucesso.                                                              | `session_id`, `user_context_id`                                  |
+| `plan_generation_started` | LLM começou a streamar o plano de estudos.                                                                    | `session_id`, `user_context_id`                                  |
+| `plan_generation_completed` | Stream do plano concluiu sem erro.                                                                           | `session_id`, `user_context_id`, `tokens_streamed`               |
+| `session_finished`        | Sessão encerrada. Verifique `committed` e `error`.                                                            | `session_id`, `total_tokens`, `committed`, `user_context_id`, `error?` |
 
-### Respostas Esperadas
-- [ ] Para stream=false: JSON com campo `reply`
-- [ ] Para stream=true: Sequência de eventos SSE terminando com `session_finished`
-- [ ] Sempre incluir `session_id` nos logs/payloads para rastreamento
-- [ ] Tokens são enviados em pedaços pequenos (chunk_size configurável via env)
-- [ ] Delay entre tokens configurável via `AI_STREAM_DELAY_MS`
+### Recomendações de UI
 
-## Considerações Técnicas
-- Conexão SSE mantém-se aberta até `session_finished`
-- Tool calls são executadas automaticamente (commit_user_context para persistir contexto)
-- Plano de estudos é gerado apenas após commit bem-sucedido
-- Sistema prompt inclui fluxo completo de onboarding em português
-- Logs detalhados disponíveis para debugging (com session_id)
+- Use `session_started` para inicializar o estado local e vincular `session_id`.
+- `context_committed` deve disparar feedback visual (“contexto salvo”) e habilitar transições para dashboards ou loaders.
+- Ao receber `plan_generation_started`, mostre indicador de carregamento e prepare a área de exibição do plano.
+- `plan_generation_completed` confirma que todo o texto foi recebido; renderize ou salve o plano.
+- `session_finished` encerra a stream. Se `error` estiver presente, mostre mensagem e permita recomeçar.
+
+## `token`
+
+Fragmentos de texto.
+
+```json
+{
+  "index": 12,
+  "stage": "study_plan",
+  "text": "Dia 1 — Fundamentos Java..."
+}
+```
+
+- `stage` pode ser:
+  - `assistant_response`: conversa durante a coleta de dados.
+  - `study_plan`: geração do plano após o commit.
+- Recomenda-se concatenar mantendo a ordem por `index`.
+
+## `heartbeat`
+
+Mantém a conexão viva durante operações demoradas (ex.: execução da tool).
+
+```json
+{
+  "stage": "tool_call",
+  "tool": "commit_user_context"
+}
+```
+
+- Útil para mostrar status (“salvando informações…”).
+
+## `error`
+
+Erros estruturados.
+
+```json
+{
+  "stage": "tool_call",
+  "tool": "commit_user_context",
+  "message": "UserContextSerializer validation error"
+}
+```
+
+- Sempre seguido por `meta` com `session_finished`. Use o payload para mensagens ao usuário.
+
+# Checklist de Integração
+
+- [ ] Abrir conexão SSE e registrar listener para todos os eventos acima.
+- [ ] Armazenar `session_id` recebido em `meta`.
+- [ ] Manter buffer dos `token` por `stage`.
+- [ ] Tratar `context_committed` para atualizar o app state (contexto salvo).
+- [ ] Tratar `plan_generation_*` para iniciar/parar loaders de plano.
+- [ ] Encerrar UI ao receber `session_finished` (sucesso ou erro).
+- [ ] Realizar reconexão ou fallback se a stream encerrar sem `session_finished`.
+
+# Boas Práticas de Front-end
+
+- **Backlog do Chat**: renderize mensagens conforme os tokens chegam.
+- **Estado “Salvando”**: quando chegar `heartbeat` + `tool_call`, mostre progresso até `context_committed`.
+- **Plano de Estudos**: concatene tokens de `stage: study_plan` em um buffer separado para exibição e persistência local.
+- **Erros**: em `error`, logue o `session_id` e ofereça opção de tentar novamente.
+- **Retentativas**: respeite cabeçalho `retry` se precisar reconectar.
+
+# Fluxo Comentado
+
+1. Front envia histórico com `stream: true`.
+2. Recebe `meta` → `session_started`.
+3. Recebe vários `token` (`assistant_response`) com as perguntas do Wizard.
+4. Usuário responde; front reenvia histórico atualizado.
+5. LLM chama tool → backend emite `heartbeat` (tool call) e, ao concluir, `meta` → `context_committed`.
+6. Backend dispara `plan_generation_started` e tokens (`study_plan`).
+7. Finaliza com `plan_generation_completed` e `session_finished`.
+
+# Logs e Observabilidade
+
+- Cada evento inclui `session_id` para rastrear no backend.
+- Logs adicionais:
+  - `tool_call_result`: tool executada com chaves do retorno.
+  - `response_content_fallback`: modelo sem content; fallback em texto.
+  - `model_content_skipped` / `plan_history_without_model_content`: úteis para debug.
+
+# Próximos Passos (Roadmap)
+
+- Integrar GET `/user-context/` para pré-carregar estados.
+- Implementar fluxo de avaliação diagnóstica (modelo `DiagnosticAssessment`).
+- Persistir planos via `StudyPlan`, `StudyDay`, `StudyTask` e expor endpoints REST para leitura.
+
+Este guia será atualizado à medida que novos eventos ou ferramentas forem adicionados.

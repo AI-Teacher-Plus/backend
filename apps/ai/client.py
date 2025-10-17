@@ -151,7 +151,7 @@ def generate(
         config=cfg,
     )
     if session_id:
-        text = getattr(resp, "text", "")
+        text = getattr(resp, "text", "") or ""
         print(json.dumps({
             "timestamp": datetime.now().isoformat(),
             "session_id": session_id,

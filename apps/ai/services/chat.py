@@ -28,10 +28,15 @@ SYSTEM = (
   "11. **Consentimentos**: Explique uso de dados e materiais, peça consentimento LGPD.\n\n"
   "Valide formatos (datas, números), permita correções a qualquer momento. "
   "Quando TODOS os dados obrigatórios estiverem coletados (persona, goal, deadline, weekly_time_hours, consent_lgpd), "
-  "recapitule o contexto coletado de forma clara, pergunte se confirma. "
+  "SEMPRE recapitule o contexto coletado de forma clara, pergunte se confirma. "
   "Apenas se o usuário confirmar explicitamente, chame commit_user_context com os dados. "
   "Após persistência bem-sucedida, gere o primeiro plano de estudos personalizado baseado no contexto coletado, "
-  "incluindo recomendações iniciais e agendamento para FSRS (repetição espaçada)."
+  "incluindo recomendações iniciais e agendamento para FSRS (repetição espaçada).\n\n"
+  "Antes de chamar commit_user_context você deve garantir:\n"
+  "- \"deadline\" em formato ISO YYYY-MM-DD (se o usuário falar em dias, converta para data contando a partir de hoje).\n"
+  "- \"weekly_time_hours\" como inteiro (ex.: se informar \"10h\", envie 10).\n"
+  "- \"consent_lgpd\" como booleano verdadeiro/falso.\n"
+  "Se os dados ainda não estiverem nesse formato, pergunte novamente até obter valores válidos."
 )
 
 
@@ -65,6 +70,34 @@ def _extract_function_calls(resp) -> list[types.FunctionCall]:
             if fc:
                 calls.append(fc)
     return calls
+
+
+def _response_to_content(resp, session_id: str | None = None) -> types.Content:
+    """
+    Safely extract the first candidate content from a model response.
+    Falls back to plain text content when the candidate payload is missing.
+    """
+    candidate_content = None
+    candidates = getattr(resp, "candidates", None)
+    if candidates:
+        first_candidate = candidates[0]
+        candidate_content = getattr(first_candidate, "content", None)
+        if candidate_content is not None:
+            return candidate_content
+
+    text = getattr(resp, "text", "") or ""
+    if session_id:
+        print(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "event": "response_content_fallback",
+            "reason": "candidate_content_missing",
+            "text_length": len(text)
+        }))
+    parts: list[types.Part] = []
+    if text:
+        parts.append(types.Part(text=text))
+    return types.Content(role="model", parts=parts)
 
 
 def chat_once(user, messages: list[dict], session_id: str = None) -> str:
@@ -120,10 +153,18 @@ def chat_once(user, messages: list[dict], session_id: str = None) -> str:
         # Pede continuação incluindo:
         # - o conteúdo da chamada de função anterior (cand.content)
         # - as respostas de função como um novo Content(role="user")
-        follow_up = [
-            resp.candidates[0].content,  # conteúdo do modelo com function_call
-            types.Content(role="user", parts=out_parts),
-        ]
+        follow_up = []
+        model_content = _response_to_content(resp, session_id)
+        if getattr(model_content, "parts", None):
+            follow_up.append(model_content)
+        elif session_id:
+            print(json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "event": "model_content_skipped",
+                "reason": "empty_parts_after_tool_call",
+            }))
+        follow_up.append(types.Content(role="user", parts=out_parts))
         if session_id:
             logging.info(json.dumps({
                 "timestamp": datetime.now().isoformat(),
@@ -204,6 +245,15 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
                 })
                 return
 
+            if session_id:
+                print(json.dumps({
+                    "timestamp": datetime.now().isoformat(),
+                    "session_id": session_id,
+                    "event": "tool_call_result",
+                    "tool": call.name,
+                    "result_keys": sorted(result.keys()),
+                    "status": result.get("status"),
+                }))
             if call.name == "commit_user_context":
                 if result.get("status") == "ok":
                     committed = True
@@ -231,32 +281,49 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
 
             out_parts.append(types.Part.from_function_response(name=call.name, response=result))
 
-        follow_up = [
-            resp.candidates[0].content,
-            types.Content(role="user", parts=out_parts),
-        ]
-        resp = generate(contents=follow_up, tools=tools, stream=False, session_id=session_id)
+        model_content = _response_to_content(resp, session_id)
+        if getattr(model_content, "parts", None):
+            hist.append(model_content)
+        elif session_id:
+            print(json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "event": "model_content_skipped",
+                "reason": "empty_parts_after_tool_call",
+            }))
+        if out_parts:
+            hist.append(types.Content(role="user", parts=out_parts))
+        resp = generate(contents=hist, tools=tools, stream=False, session_id=session_id)
         calls = _extract_function_calls(resp)
+
+    final_content = _response_to_content(resp, session_id)
+    if getattr(final_content, "parts", None):
+        hist.append(final_content)
+    elif session_id:
+        print(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "event": "final_content_skipped",
+            "reason": "empty_parts",
+        }))
 
     if committed:
         plan_prompt = "Com base no contexto do usuário recém-persistido, gere um plano de estudos inicial personalizado."
-        plan_contents = _make_history(messages) + [
-            resp.candidates[0].content,
-            types.Content(role="user", parts=[types.Part(text=plan_prompt)]),
-        ]
+        plan_request = types.Content(role="user", parts=[types.Part(text=plan_prompt)])
+        hist.append(plan_request)
         if session_id:
             print(json.dumps({
                 "timestamp": datetime.now().isoformat(),
                 "session_id": session_id,
                 "event": "plan_prompt_assembled",
                 "plan_prompt": plan_prompt,
-                "plan_contents_count": len(plan_contents)
+                "plan_contents_count": len(hist)
             }))
         yield _wrap("meta", {
             "type": "plan_generation_started",
             "user_context_id": context_id,
         })
-        stream = generate(contents=plan_contents, stream=True, session_id=session_id)
+        stream = generate(contents=hist, stream=True, session_id=session_id)
         for chunk in stream:
             text_piece = getattr(chunk, "text", None)
             if not text_piece:
@@ -299,4 +366,3 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
         "committed": committed,
         "user_context_id": context_id,
     })
-

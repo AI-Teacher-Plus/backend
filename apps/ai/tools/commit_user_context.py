@@ -1,4 +1,10 @@
+import json
+import re
+from datetime import timedelta
+
+from django.utils import timezone
 from google.genai import types
+
 from apps.accounts.serializers import UserContextSerializer
 from collections.abc import Mapping
 
@@ -85,12 +91,76 @@ def function_declarations() -> list[types.FunctionDeclaration]:
     ]
 
 
+_BOOL_TRUE = {"true", "yes", "sim", "1"}
+
+
+def _extract_int(value):
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        match = re.search(r"-?\d+", value)
+        if match:
+            return int(match.group(0))
+    return None
+
+
+def _normalize_deadline(value: str | None) -> str | None:
+    if not value:
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        # Already ISO-8601 YYYY-MM-DD
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return value
+        # Try to capture numeric duration in days
+        days = _extract_int(value)
+        if days is not None and days >= 0:
+            target = timezone.now().date() + timedelta(days=days)
+            return target.isoformat()
+    return value
+
+
+def _normalize_weekly_hours(value):
+    if isinstance(value, int):
+        return value
+    hours = _extract_int(value)
+    return hours if hours is not None and hours >= 0 else value
+
+
+def _normalize_consent(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in _BOOL_TRUE
+    return bool(value)
+
+
+def _normalize_args(args: dict) -> dict:
+    normalized = dict(args or {})
+    if "deadline" in normalized:
+        normalized["deadline"] = _normalize_deadline(normalized.get("deadline"))
+    if "weekly_time_hours" in normalized:
+        normalized["weekly_time_hours"] = _normalize_weekly_hours(normalized.get("weekly_time_hours"))
+    if "consent_lgpd" in normalized:
+        normalized["consent_lgpd"] = _normalize_consent(normalized.get("consent_lgpd"))
+    return normalized
+
+
 def handle_tool_call(user, name: str, args: dict) -> dict:
     if name != "commit_user_context":
         return {"status": "error", "message": f"Unknown tool {name}"}
 
+    normalized_args = _normalize_args(args)
+    print(json.dumps({
+        "event": "commit_user_context_payload",
+        "normalized": normalized_args,
+    }))
     instance = getattr(user, "context", None)
-    ser = UserContextSerializer(instance=instance, data=args, partial=True)
+    ser = UserContextSerializer(instance=instance, data=normalized_args, partial=True)
     ser.is_valid(raise_exception=True)
     obj = ser.save(user=user)
     return {"status": "ok", "user_context_id": str(obj.id)}
