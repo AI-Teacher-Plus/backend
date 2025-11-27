@@ -187,6 +187,17 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM"))
 
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_TASK_DEFAULT_QUEUE = os.getenv("CELERY_TASK_DEFAULT_QUEUE", "default")
+CELERY_TASK_QUEUES = {
+    "default": {},
+    "ai_generation": {},
+    "ingest": {},
+}
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "300"))
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "280"))
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "Teacher Plus Backend API",
     "DESCRIPTION": "API for the Teacher Plus application",

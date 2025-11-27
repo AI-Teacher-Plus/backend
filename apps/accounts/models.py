@@ -25,11 +25,10 @@ class UserContext(models.Model):
     deadline = models.DateField()
     weekly_time_hours = models.IntegerField()
     study_routine = models.TextField()
-    background_level = models.CharField(max_length=100)
-    background_institution_type = models.CharField(max_length=20)
-    self_assessment = models.JSONField(default=dict)
-    diagnostic_status = models.CharField(max_length=20)
-    diagnostic_snapshot = models.JSONField(default=list)
+    background_level = models.CharField(max_length=2000)
+    self_assessment = models.JSONField(default=dict, null=True)
+    diagnostic_status = models.CharField(max_length=20, null=True, blank=True)
+    diagnostic_snapshot = models.JSONField(default=list, null=True)
     interests = models.JSONField(default=list)
     materials = models.ManyToManyField(FileRef, related_name='user_contexts', blank=True)
     preferences_formats = models.JSONField(default=list)
@@ -90,6 +89,14 @@ class StudyPlan(models.Model):
     end_date = models.DateField(null=True, blank=True)
     total_days = models.PositiveIntegerField(default=0)
     metadata = models.JSONField(default=dict, blank=True)
+    rag_documents = models.ManyToManyField("ai.Document", related_name="study_plans", blank=True)
+    generation_status = models.CharField(
+        max_length=20,
+        choices=[("pending", "Pending"), ("running", "Running"), ("failed", "Failed"), ("succeeded", "Succeeded")],
+        default="pending",
+    )
+    last_error = models.TextField(blank=True, default="")
+    job_id = models.CharField(max_length=100, null=True, blank=True)
     generated_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -98,6 +105,34 @@ class StudyPlan(models.Model):
 
     def __str__(self):
         return f"StudyPlan({self.user_context_id}, status={self.status})"
+
+
+class StudyWeek(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("scheduled", "Scheduled"),
+        ("active", "Active"),
+        ("completed", "Completed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    plan = models.ForeignKey(StudyPlan, on_delete=models.CASCADE, related_name="weeks")
+    week_index = models.PositiveIntegerField()
+    title = models.CharField(max_length=200, blank=True)
+    focus = models.TextField(blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["week_index"]
+        unique_together = ("plan", "week_index")
+
+    def __str__(self):
+        return f"StudyWeek(plan={self.plan_id}, index={self.week_index})"
 
 
 class StudyDay(models.Model):
@@ -110,6 +145,7 @@ class StudyDay(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     plan = models.ForeignKey(StudyPlan, on_delete=models.CASCADE, related_name="days")
+    week = models.ForeignKey(StudyWeek, on_delete=models.CASCADE, related_name="days", null=True, blank=True)
     day_index = models.PositiveIntegerField()
     scheduled_date = models.DateField(null=True, blank=True)
     title = models.CharField(max_length=200, blank=True)
@@ -167,3 +203,140 @@ class StudyTask(models.Model):
 
     def __str__(self):
         return f"StudyTask({self.day_id}, order={self.order}, type={self.task_type})"
+
+
+class LessonContent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task = models.OneToOneField(StudyTask, on_delete=models.CASCADE, related_name="lesson_content")
+    summary = models.TextField(blank=True)
+    body = models.TextField(blank=True)
+    key_points = models.JSONField(default=list, blank=True)
+    source_refs = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"LessonContent(task={self.task_id})"
+
+
+class ReadingContent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task = models.OneToOneField(StudyTask, on_delete=models.CASCADE, related_name="reading_content")
+    overview = models.TextField(blank=True)
+    instructions = models.TextField(blank=True)
+    resources = models.JSONField(default=list, blank=True)
+    generated_text = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"ReadingContent(task={self.task_id})"
+
+
+class PracticeContent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task = models.OneToOneField(StudyTask, on_delete=models.CASCADE, related_name="practice_content")
+    prompt = models.TextField()
+    expected_output = models.TextField(blank=True)
+    rubric = models.JSONField(default=dict, blank=True)
+    hints = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"PracticeContent(task={self.task_id})"
+
+
+class ProjectContent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task = models.OneToOneField(StudyTask, on_delete=models.CASCADE, related_name="project_content")
+    brief = models.TextField()
+    deliverables = models.JSONField(default=list, blank=True)
+    evaluation = models.TextField(blank=True)
+    resources = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"ProjectContent(task={self.task_id})"
+
+
+class ReflectionContent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task = models.OneToOneField(StudyTask, on_delete=models.CASCADE, related_name="reflection_content")
+    prompt = models.TextField()
+    guidance = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"ReflectionContent(task={self.task_id})"
+
+
+class ReviewSessionContent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task = models.OneToOneField(StudyTask, on_delete=models.CASCADE, related_name="review_content")
+    topics = models.JSONField(default=list, blank=True)
+    strategy = models.TextField(blank=True)
+    follow_up = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"ReviewContent(task={self.task_id})"
+
+
+class FlashcardSet(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task = models.OneToOneField(StudyTask, on_delete=models.CASCADE, related_name="flashcard_set")
+    title = models.CharField(max_length=200, blank=True)
+    description = models.TextField(blank=True)
+    tags = models.JSONField(default=list, blank=True)
+
+    def __str__(self):
+        return f"FlashcardSet(task={self.task_id})"
+
+
+class Flashcard(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    card_set = models.ForeignKey(FlashcardSet, on_delete=models.CASCADE, related_name="cards")
+    front = models.TextField()
+    back = models.TextField()
+    hints = models.JSONField(default=list, blank=True)
+    tags = models.JSONField(default=list, blank=True)
+    difficulty = models.PositiveSmallIntegerField(default=1)
+
+    def __str__(self):
+        return f"Flashcard(set={self.card_set_id})"
+
+
+class Assessment(models.Model):
+    ASSESSMENT_TYPES = [
+        ("quiz", "Quiz"),
+        ("test", "Test"),
+        ("diagnostic", "Diagnostic"),
+        ("practice", "Practice"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task = models.OneToOneField(StudyTask, on_delete=models.CASCADE, related_name="assessment")
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    assessment_type = models.CharField(max_length=20, choices=ASSESSMENT_TYPES, default="quiz")
+    passing_score = models.FloatField(null=True, blank=True)
+    time_limit_minutes = models.PositiveIntegerField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return f"Assessment(task={self.task_id}, type={self.assessment_type})"
+
+
+class AssessmentItem(models.Model):
+    ITEM_TYPES = [
+        ("mcq", "Multiple Choice"),
+        ("tf", "True/False"),
+        ("open", "Open"),
+        ("short", "Short Answer"),
+        ("code", "Coding"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    assessment = models.ForeignKey(Assessment, on_delete=models.CASCADE, related_name="items")
+    item_type = models.CharField(max_length=20, choices=ITEM_TYPES, default="mcq")
+    prompt = models.TextField()
+    choices = models.JSONField(default=list, blank=True)
+    answer = models.JSONField(default=dict, blank=True)
+    explanation = models.TextField(blank=True)
+    difficulty = models.PositiveSmallIntegerField(default=1)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    def __str__(self):
+        return f"AssessmentItem({self.assessment_id}, type={self.item_type})"

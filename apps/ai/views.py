@@ -3,23 +3,53 @@ import json
 import logging
 import time
 from datetime import datetime
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from django.db import transaction
 from django.http import StreamingHttpResponse
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes # Import extend_schema and OpenApiParameter
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from celery.result import AsyncResult
+
+from setup.celery import app as celery_app
+from apps.accounts.models import StudyPlan, FileRef
 from .models import Document, Chunk
 from .serializers import (
     DocumentIngestSerializer,
     ChatRequestSerializer,
     DocumentIngestResponseSerializer,
     SearchResultSerializer,
-    ChatResponseSerializer
+    ChatResponseSerializer,
+    GeneratePlanRequestSerializer,
+    StudyPlanSerializer,
+    StudyPlanSummarySerializer,
+    GenerateDayRequestSerializer,
+    GenerateTasksRequestSerializer,
+    PlanMaterialUploadSerializer,
+    StudyTaskSerializer,
+    PlanMaterialUploadResponseSerializer,
+    JobStatusSerializer,
 )
 from .services.chat import chat_once, chat_stream
 from .services.embedding import embed_batch
 from .services.search import semantic_search
+from .tasks import (
+    generate_study_plan_task,
+    generate_study_day_task,
+    generate_section_tasks_task,
+    ingest_material_task,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _log_api_event(event: str, **payload):
+    record = {"event": event, **payload}
+    try:
+        logger.info(json.dumps(record, default=str))
+    except Exception:
+        logger.info("%s | %s", event, payload)
 
 
 def simple_chunk(text: str, max_chars=1200):
@@ -242,4 +272,306 @@ class ChatSSEView(APIView):
         resp = StreamingHttpResponse(event_source(), content_type="text/event-stream")
         resp["Cache-Control"] = "no-cache"
         resp["X-Accel-Buffering"] = "no"  # Nginx: nÃ£o buferizar
+        return resp
+
+
+class StudyPlanListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="listStudyPlans",
+        responses={200: StudyPlanSummarySerializer(many=True)},
+        description="Lista os planos de estudo do usuario autenticado.",
+    )
+    def get(self, request):
+        _log_api_event(
+            "study_plan_list_started",
+            user_id=str(request.user.id),
+            username=request.user.username,
+        )
+        plans = StudyPlan.objects.filter(user_context__user=request.user).prefetch_related("weeks")
+        data = StudyPlanSummarySerializer(plans, many=True).data
+        _log_api_event(
+            "study_plan_list_completed",
+            user_id=str(request.user.id),
+            plan_count=len(data),
+        )
+        return Response(data)
+
+
+class GenerateStudyPlanView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="generateStudyPlan",
+        request=GeneratePlanRequestSerializer,
+        responses={201: StudyPlanSerializer},
+        description="Gera um plano de estudo + tarefas iniciais via IA, persistindo secoes e tarefas.",
+    )
+    def post(self, request):
+        user_context = getattr(request.user, "context", None)
+        if not user_context:
+            return Response({"detail": "UserContext inexistente para o usuario."}, status=400)
+
+        s = GeneratePlanRequestSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        _log_api_event(
+            "study_plan_generate_request",
+            user_id=str(request.user.id),
+            payload={k: v for k, v in s.validated_data.items()},
+        )
+
+        job_id = str(uuid.uuid4())
+        plan = StudyPlan.objects.create(
+            user_context=user_context,
+            title=s.validated_data.get("title") or user_context.goal,
+            status="draft",
+            generation_status="pending",
+            job_id=job_id,
+            metadata={"requested_goal_override": s.validated_data.get("goal_override")},
+        )
+        generate_study_plan_task.apply_async(
+            args=[job_id, str(plan.id), str(user_context.id), s.validated_data.get("goal_override"), s.validated_data.get("title")],
+            queue="ai_generation",
+        )
+        _log_api_event(
+            "study_plan_generate_enqueued",
+            user_id=str(request.user.id),
+            plan_id=str(plan.id),
+            job_id=job_id,
+        )
+        serialized = StudyPlanSerializer(plan).data
+        return Response(serialized, status=status.HTTP_201_CREATED)
+
+
+class StudyPlanDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="getStudyPlan",
+        responses={200: StudyPlanSerializer},
+        description="Retorna um plano de estudo com secoes e tarefas.",
+    )
+    def get(self, request, plan_id):
+        plan = (
+            StudyPlan.objects.filter(id=plan_id, user_context__user=request.user)
+            .prefetch_related("weeks__days__tasks", "rag_documents")
+            .first()
+        )
+        if not plan:
+            _log_api_event(
+                "study_plan_detail_not_found",
+                user_id=str(request.user.id),
+                plan_id=str(plan_id),
+            )
+            return Response({"detail": "Plano nao encontrado."}, status=404)
+        _log_api_event(
+            "study_plan_detail_loaded",
+            user_id=str(request.user.id),
+            plan_id=str(plan.id),
+            weeks=plan.weeks.count(),
+        )
+        return Response(StudyPlanSerializer(plan).data)
+
+
+class GenerateSectionTasksView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="generateSectionTasks",
+        request=GenerateTasksRequestSerializer,
+        responses={201: StudyTaskSerializer(many=True)},
+        description="Gera e persiste novas tarefas para uma secao especifica do plano.",
+    )
+    def post(self, request, plan_id):
+        plan = StudyPlan.objects.filter(id=plan_id, user_context__user=request.user).first()
+        if not plan:
+            return Response({"detail": "Plano nao encontrado."}, status=404)
+
+        s = GenerateTasksRequestSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        section_id = s.validated_data["section_id"]
+        _log_api_event(
+            "study_plan_section_tasks_request",
+            user_id=str(request.user.id),
+            plan_id=str(plan.id),
+            section_id=section_id,
+        )
+
+        job_id = str(uuid.uuid4())
+        plan.generation_status = "pending"
+        plan.last_error = ""
+        plan.job_id = job_id
+        plan.save(update_fields=["generation_status", "last_error", "job_id"])
+        generate_section_tasks_task.apply_async(
+            args=[job_id, str(plan.id), section_id, str(request.user.id)],
+            queue="ai_generation",
+        )
+        _log_api_event(
+            "study_plan_section_tasks_enqueued",
+            user_id=str(request.user.id),
+            plan_id=str(plan.id),
+            job_id=job_id,
+            section_id=section_id,
+        )
+        return Response({"job_id": job_id, "plan_id": str(plan.id), "section_id": section_id}, status=status.HTTP_202_ACCEPTED)
+
+
+class GenerateStudyDayView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="generateStudyDay",
+        request=GenerateDayRequestSerializer,
+        responses={202: {"type": "object", "properties": {"job_id": {"type": "string"}, "plan_id": {"type": "string"}, "day_id": {"type": "string"}}}},
+        description="Gera ou regenera as tarefas de um dia especifico do plano de forma assincrona.",
+    )
+    def post(self, request, plan_id, day_id):
+        plan = StudyPlan.objects.filter(id=plan_id, user_context__user=request.user).first()
+        if not plan:
+            return Response({"detail": "Plano nao encontrado."}, status=404)
+        day = plan.days.filter(id=day_id).first()
+        if not day:
+            return Response({"detail": "Dia nao encontrado."}, status=404)
+
+        s = GenerateDayRequestSerializer(data=request.data or {})
+        s.is_valid(raise_exception=True)
+
+        job_id = str(uuid.uuid4())
+        plan.generation_status = "pending"
+        plan.last_error = ""
+        plan.job_id = job_id
+        plan.save(update_fields=["generation_status", "last_error", "job_id"])
+
+        day_meta = day.metadata or {}
+        day_meta.update({"generation_status": "pending", "job_id": job_id, "last_error": ""})
+        day.metadata = day_meta
+        day.save(update_fields=["metadata"])
+
+        generate_study_day_task.apply_async(
+            args=[job_id, str(plan.id), str(day.id), s.validated_data["reset_existing"]],
+            queue="ai_generation",
+        )
+        _log_api_event(
+            "study_plan_day_generate_enqueued",
+            user_id=str(request.user.id),
+            plan_id=str(plan.id),
+            day_id=str(day.id),
+            job_id=job_id,
+        )
+        return Response({"job_id": job_id, "plan_id": str(plan.id), "day_id": str(day.id)}, status=status.HTTP_202_ACCEPTED)
+
+
+class StudyPlanMaterialUploadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="uploadStudyPlanMaterial",
+        request=PlanMaterialUploadSerializer,
+        responses={201: PlanMaterialUploadResponseSerializer},
+        description="Faz upload de arquivo, associa ao plano e o ingere no RAG (Document + chunks).",
+    )
+    @transaction.atomic
+    def post(self, request, plan_id):
+        plan = StudyPlan.objects.filter(id=plan_id, user_context__user=request.user).first()
+        if not plan:
+            return Response({"detail": "Plano nao encontrado."}, status=404)
+
+        s = PlanMaterialUploadSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+
+        uploaded = s.validated_data["file"]
+        job_id = str(uuid.uuid4())
+        file_ref = FileRef.objects.create(file=uploaded)
+        user_context = plan.user_context
+        user_context.materials.add(file_ref)
+
+        doc = Document.objects.create(
+            title=s.validated_data.get("title") or uploaded.name,
+            owner=request.user,
+            source="study_plan_upload",
+            ingest_status="pending",
+            job_id=job_id,
+        )
+        _log_api_event(
+            "study_plan_material_upload_enqueued",
+            user_id=str(request.user.id),
+            plan_id=str(plan.id),
+            job_id=job_id,
+            document_id=str(doc.id),
+            file_id=str(file_ref.id),
+        )
+
+        ingest_material_task.apply_async(
+            args=[job_id, str(plan.id), str(file_ref.id), str(doc.id), doc.title],
+            queue="ingest",
+        )
+
+        return Response(
+            {"job_id": job_id, "plan_id": str(plan.id), "file_id": str(file_ref.id), "document_id": str(doc.id)},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class JobStatusView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="jobStatus",
+        responses={200: JobStatusSerializer},
+        description="Consulta status de um job Celery.",
+    )
+    def get(self, request, job_id):
+        res = AsyncResult(job_id, app=celery_app)
+        data = {"job_id": job_id, "status": res.status.lower()}
+        if res.failed():
+            data["error"] = str(res.result)
+        if res.successful():
+            try:
+                data["result"] = res.result if isinstance(res.result, dict) else {"result": res.result}
+            except Exception:
+                data["result"] = None
+        ser = JobStatusSerializer(data=data)
+        ser.is_valid(raise_exception=True)
+        return Response(ser.data)
+
+
+class JobStreamView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="jobStatusStream",
+        parameters=[
+            OpenApiParameter(name="job_id", type=OpenApiTypes.STR, description="Job ID a acompanhar", required=True),
+        ],
+        responses={200: {"description": "SSE com status do job"}},
+        description="SSE que streama mudancas de status de um job Celery.",
+    )
+    def get(self, request):
+        job_id = request.query_params.get("job_id")
+        if not job_id:
+            return Response({"detail": "job_id obrigatorio"}, status=400)
+
+        def event_source():
+            res = AsyncResult(job_id, app=celery_app)
+            last_status = None
+            for _ in range(360):  # ~6 minutos
+                status_lower = res.status.lower()
+                if status_lower != last_status:
+                    yield encode_sse("meta", {"job_id": job_id, "status": status_lower})
+                    last_status = status_lower
+                if res.ready():
+                    if res.failed():
+                        yield encode_sse("error", {"job_id": job_id, "message": str(res.result)})
+                    else:
+                        payload = res.result if isinstance(res.result, dict) else {"result": res.result}
+                        yield encode_sse("result", {"job_id": job_id, **(payload or {})})
+                    break
+                time.sleep(1)
+            else:
+                yield encode_sse("meta", {"job_id": job_id, "status": "timeout"})
+
+        resp = StreamingHttpResponse(event_source(), content_type="text/event-stream")
+        resp["Cache-Control"] = "no-cache"
+        resp["X-Accel-Buffering"] = "no"
         return resp

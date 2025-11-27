@@ -11,6 +11,13 @@ class Document(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL, related_name="documents", on_delete=models.CASCADE, null=True
     )
+    ingest_status = models.CharField(
+        max_length=20,
+        choices=[("pending", "Pending"), ("running", "Running"), ("failed", "Failed"), ("succeeded", "Succeeded")],
+        default="succeeded",
+    )
+    last_error = models.TextField(blank=True, default="")
+    job_id = models.CharField(max_length=100, null=True, blank=True)
     def __str__(self):
         return f"{self.title} ({self.id})"
 
