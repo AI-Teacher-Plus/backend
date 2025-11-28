@@ -43,6 +43,16 @@ class GenerateTasksRequestSerializer(serializers.Serializer):
     section_id = serializers.CharField()
 
 
+class TaskProgressRequestSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["pending", "ready", "in_progress", "completed"])
+    minutes_spent = serializers.IntegerField(required=False, min_value=0, default=0)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    payload = serializers.DictField(required=False, allow_empty=True)
+
+    def validate_payload(self, value):
+        return value or {}
+
+
 class GenerateDayRequestSerializer(serializers.Serializer):
     reset_existing = serializers.BooleanField(required=False, default=True)
 

@@ -7,6 +7,7 @@ from .views import (
     StudyPlanListView,
     GenerateStudyPlanView,
     StudyPlanDetailView,
+    StudyTaskProgressView,
     GenerateSectionTasksView,
     GenerateStudyDayView,
     StudyPlanMaterialUploadView,
@@ -25,6 +26,7 @@ urlpatterns = [
     path("study-plans/<uuid:plan_id>/days/<uuid:day_id>/generate/", GenerateStudyDayView.as_view(), name="study_plan_day_generate"),
     path("study-plans/<uuid:plan_id>/tasks/", GenerateSectionTasksView.as_view(), name="study_plan_tasks"),
     path("study-plans/<uuid:plan_id>/materials/", StudyPlanMaterialUploadView.as_view(), name="study_plan_material"),
+    path("study-tasks/<uuid:task_id>/progress/", StudyTaskProgressView.as_view(), name="study_task_progress"),
     path("jobs/<str:job_id>/", JobStatusView.as_view(), name="job_status"),
     path("jobs/stream/", JobStreamView.as_view(), name="job_stream"),
 ]

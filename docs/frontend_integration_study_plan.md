@@ -15,6 +15,7 @@
 | Detalhe completo | `GET /api/ai/study-plans/{plan_id}/` | - | `200 StudyPlanSerializer` | Inclui `weeks[].days[].tasks`, `generation_status`, `rag_document_ids`. |
 | Gerar tarefas para secao | `POST /api/ai/study-plans/{plan_id}/tasks/` | `{ "section_id": "s1" }` | `202 { job_id, plan_id, section_id }` | Plano volta a `pending` ate job concluir. |
 | Gerar um dia especifico | `POST /api/ai/study-plans/{plan_id}/days/{day_id}/generate/` | `{ "reset_existing"?: bool }` | `202 { job_id, plan_id, day_id }` | Usa metadata do dia/`section_id` para criar ou regerar tasks daquele dia. |
+| Atualizar progresso de tarefa | `POST /api/ai/study-tasks/{task_id}/progress/` | `{ "status": "pending|ready|in_progress|completed", "minutes_spent"?: int, "notes"?: str, "payload"?: {} }` | `200 { task_id, plan_id, day_id, status, day_status, metadata }` | Endpoint genérico para marcar conclusao de flashcards/quizzes/leituras/etc.; recalcula `day_status`. |
 | Upload de material (RAG) | `POST /api/ai/study-plans/{plan_id}/materials/` | multipart `file`, `title?` | `202 { job_id, plan_id, file_id, document_id }`. |
 | Consultar job | `GET /api/ai/jobs/{job_id}/` | - | `200 { job_id, status, result?, error? }`. |
 | SSE de job | `GET /api/ai/jobs/stream/?job_id=...` | - | `text/event-stream` com eventos `meta`, `result`, `error`. |
@@ -24,6 +25,7 @@
   - `weeks[]` → cada semana tem `week_index`, status, título e `days`.
   - `weeks[].days[]` → cada dia indica `section_id`, `prerequisites`, `week_index`, `tasks`.
   - Cada dia também traz `generation_status`, `job_id`, `last_error` via `metadata` para monitorar geração incremental.
+  - Cada task aceita progresso via `POST /study-tasks/{task_id}/progress/` e retorna `day_status` recalculado.
   - `days[].tasks[]` → cada task possui:
     - `task_type` (lesson, reading, practice, project, flashcards, assessment, reflection, review, etc.).
     - `content_type` (mesmo enumerado) + `content` tipado (ex.: `LessonContent`, `FlashcardSet`, `Assessment`).

@@ -485,14 +485,20 @@ def persist_plan_from_payload(
         day_map[sec.get("id")] = day
 
     tasks = payload.get("tasks") or []
+    used_orders: set[int] = set()
     for pos, task in enumerate(tasks, start=1):
         section_key = task.get("section_id")
         day = day_map.get(section_key)
         if not day:
             continue
+        desired_order = _safe_int(task.get("suggested_order"), pos)
+        order_value = desired_order
+        while order_value in used_orders:
+            order_value += 1
+        used_orders.add(order_value)
         task_obj = StudyTask.objects.create(
             day=day,
-            order=_safe_int(task.get("suggested_order"), pos),
+            order=order_value,
             task_type=_map_task_type(task.get("type")),
             status="pending",
             title=task.get("title") or "Tarefa",
@@ -528,12 +534,21 @@ def persist_tasks_for_section(plan: StudyPlan, section_id: str, payload: dict) -
     existing_titles = set(
         StudyTask.objects.filter(day__plan=plan, day__metadata__section_id=section_id).values_list("title", flat=True)
     )
+    used_orders = set(
+        StudyTask.objects.filter(day=day).values_list("order", flat=True)
+    )
+    base_order = max(used_orders) if used_orders else 0
     for pos, task in enumerate(tasks, start=1):
         if task.get("title") in existing_titles:
             continue
+        desired_order = _safe_int(task.get("suggested_order"), base_order + pos)
+        order_value = desired_order
+        while order_value in used_orders:
+            order_value += 1
+        used_orders.add(order_value)
         obj = StudyTask.objects.create(
             day=day,
-            order=_safe_int(task.get("suggested_order"), pos),
+            order=order_value,
             task_type=_map_task_type(task.get("type")),
             status="pending",
             title=task.get("title") or "Tarefa",
@@ -581,16 +596,25 @@ def persist_tasks_for_day(day: StudyDay, payload: dict, reset_existing: bool = T
     if reset_existing:
         StudyTask.objects.filter(day=day).delete()
         existing_titles = set()
+        used_orders: set[int] = set()
+        base_order = 0
     else:
         existing_titles = set(StudyTask.objects.filter(day=day).values_list("title", flat=True))
+        used_orders = set(StudyTask.objects.filter(day=day).values_list("order", flat=True))
+        base_order = max(used_orders) if used_orders else 0
 
     created: list[StudyTask] = []
     for pos, task in enumerate(tasks, start=1):
         if not reset_existing and task.get("title") in existing_titles:
             continue
+        desired_order = _safe_int(task.get("suggested_order"), base_order + pos)
+        order_value = desired_order
+        while order_value in used_orders:
+            order_value += 1
+        used_orders.add(order_value)
         obj = StudyTask.objects.create(
             day=day,
-            order=_safe_int(task.get("suggested_order"), pos),
+            order=order_value,
             task_type=_map_task_type(task.get("type")),
             status="pending",
             title=task.get("title") or "Tarefa",

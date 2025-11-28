@@ -13,7 +13,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from celery.result import AsyncResult
 
 from setup.celery import app as celery_app
-from apps.accounts.models import StudyPlan, FileRef
+from apps.accounts.models import StudyPlan, StudyDay, StudyTask, FileRef
 from .models import Document, Chunk
 from .serializers import (
     DocumentIngestSerializer,
@@ -24,6 +24,7 @@ from .serializers import (
     GeneratePlanRequestSerializer,
     StudyPlanSerializer,
     StudyPlanSummarySerializer,
+    TaskProgressRequestSerializer,
     GenerateDayRequestSerializer,
     GenerateTasksRequestSerializer,
     PlanMaterialUploadSerializer,
@@ -372,6 +373,90 @@ class StudyPlanDetailView(APIView):
             weeks=plan.weeks.count(),
         )
         return Response(StudyPlanSerializer(plan).data)
+
+
+class StudyTaskProgressView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="updateStudyTaskProgress",
+        request=TaskProgressRequestSerializer,
+        responses={
+            200: {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "day_id": {"type": "string"},
+                    "status": {"type": "string"},
+                    "day_status": {"type": "string"},
+                    "metadata": {"type": "object"},
+                },
+            }
+        },
+        description="Atualiza status/progresso de uma tarefa (flashcards, quiz, leitura, etc.) e recalcula o status do dia.",
+    )
+    def post(self, request, task_id):
+        task = (
+            StudyTask.objects.select_related("day__plan", "day__plan__user_context")
+            .filter(id=task_id, day__plan__user_context__user=request.user)
+            .first()
+        )
+        if not task:
+            return Response({"detail": "Tarefa nao encontrada."}, status=404)
+
+        s = TaskProgressRequestSerializer(data=request.data or {})
+        s.is_valid(raise_exception=True)
+
+        task.status = s.validated_data["status"]
+        meta = task.metadata or {}
+        log = meta.get("progress_log") or []
+        log.append(
+            {
+                "status": task.status,
+                "minutes_spent": s.validated_data.get("minutes_spent", 0),
+                "notes": s.validated_data.get("notes"),
+                "payload": s.validated_data.get("payload") or {},
+                "at": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+        meta["progress_log"] = log
+        meta["last_progress"] = log[-1]
+        task.metadata = meta
+        task.save(update_fields=["status", "metadata", "updated_at"])
+
+        day: StudyDay = task.day
+        day_status = day.status
+        if day.tasks.exclude(status="completed").exists():
+            if day.tasks.filter(status="in_progress").exists():
+                day_status = "in_progress"
+            else:
+                day_status = "ready"
+        else:
+            day_status = "completed"
+        if day_status != day.status:
+            day.status = day_status
+            day.save(update_fields=["status", "updated_at"])
+
+        _log_api_event(
+            "study_task_progress_updated",
+            user_id=str(request.user.id),
+            plan_id=str(day.plan_id),
+            day_id=str(day.id),
+            task_id=str(task.id),
+            status=task.status,
+            day_status=day_status,
+        )
+        return Response(
+            {
+                "task_id": str(task.id),
+                "plan_id": str(day.plan_id),
+                "day_id": str(day.id),
+                "status": task.status,
+                "day_status": day_status,
+                "metadata": task.metadata,
+            }
+        )
 
 
 class GenerateSectionTasksView(APIView):

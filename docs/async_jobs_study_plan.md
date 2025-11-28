@@ -50,6 +50,7 @@ Objetivo: mover chamadas pesadas (LLM, embed, web research) para tarefas Celery,
 - POST /api/ai/study-plans/{id}/days/{day_id}/generate/ -> retorna job_id para criar/regenerar tasks de um dia especifico.
 - POST /api/ai/study-plans/{id}/tasks/ -> retorna job_id.
 - POST /api/ai/study-plans/{id}/materials/ -> retorna job_id + file_id.
+- POST /api/ai/study-tasks/{task_id}/progress/ -> sincrono, marca status/tempo de uma task e recalcula status do dia.
 - GET /api/ai/study-plans/{id}/ -> le generation_status/ingest_status.
 - GET /api/ai/jobs/{job_id}/ -> status.
 - GET or POST /api/ai/jobs/stream/?job_id=... -> SSE.
