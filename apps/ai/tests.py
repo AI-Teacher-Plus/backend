@@ -5,16 +5,17 @@ from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 from rest_framework import status
-from apps.accounts.models import UserContext
-from apps.accounts.serializers import UserContextSerializer
+from apps.accounts.models import StudyContext, StudyPlan
+from apps.accounts.serializers import StudyContextSerializer
 from apps.ai.tools.commit_user_context import handle_tool_call, function_declarations
+from apps.ai.services.plan_outline import ensure_plan_outline
 from apps.ai.views import sse_format
 
 User = get_user_model()
 
 
-class UpsertUserContextToolTest(TestCase):
-    """Testes para UpsertUserContextTool (commit_user_context)"""
+class UpsertStudyContextToolTest(TestCase):
+    """Testes para UpsertStudyContextTool (commit_user_context)"""
 
     def setUp(self):
         self.user = User.objects.create_user(
@@ -44,24 +45,26 @@ class UpsertUserContextToolTest(TestCase):
         }
 
     def test_handle_tool_call_valid_data_creates_context(self):
-        """Testa criação de UserContext com dados válidos"""
+        """Testa criação de StudyContext com dados válidos"""
         result = handle_tool_call(self.user, 'commit_user_context', self.valid_args)
 
         self.assertEqual(result['status'], 'ok')
+        self.assertIn('study_context_id', result)
         self.assertIn('user_context_id', result)
 
         # Verifica se foi criado no banco
-        context = UserContext.objects.get(user=self.user)
+        context = StudyContext.objects.get(user=self.user)
         self.assertEqual(context.persona, 'student')
         self.assertEqual(context.goal, 'ENEM preparation')
         self.assertEqual(context.deadline, date(2025, 12, 31))
         self.assertEqual(context.weekly_time_hours, 20)
         self.assertTrue(context.consent_lgpd)
+        self.assertEqual(StudyPlan.objects.filter(user_context=context).count(), 1)
 
     def test_handle_tool_call_valid_data_updates_existing_context(self):
-        """Testa atualização de UserContext existente"""
+        """Testa atualização de StudyContext existente"""
         # Cria contexto inicial
-        UserContext.objects.create(
+        StudyContext.objects.create(
             user=self.user,
             persona='teacher',
             goal='Initial goal',
@@ -85,12 +88,14 @@ class UpsertUserContextToolTest(TestCase):
         result = handle_tool_call(self.user, 'commit_user_context', update_args)
 
         self.assertEqual(result['status'], 'ok')
+        self.assertIn('study_context_id', result)
 
         # Verifica atualização
-        context = UserContext.objects.get(user=self.user)
+        context = StudyContext.objects.get(user=self.user)
         self.assertEqual(context.goal, 'Updated ENEM goal')
         self.assertEqual(context.weekly_time_hours, 25)
         self.assertEqual(context.persona, 'student')  # Mantém outros campos
+        self.assertEqual(StudyPlan.objects.filter(user_context=context).count(), 1)
 
     def test_handle_tool_call_invalid_tool_name(self):
         """Testa chamada com nome de tool inválido"""
@@ -120,10 +125,10 @@ class UpsertUserContextToolTest(TestCase):
         """Testa estrutura das function declarations"""
         declarations = function_declarations()
 
-        self.assertEqual(len(declarations), 1)
+        self.assertEqual(len(declarations), 2)
+        self.assertEqual(declarations[0].name, 'commit_study_context')
+        self.assertEqual(declarations[1].name, 'commit_user_context')
         decl = declarations[0]
-
-        self.assertEqual(decl.name, 'commit_user_context')
         self.assertIn('Cria/atualiza o contexto do usuário', decl.description)
         self.assertIn('persona', decl.parameters['properties'])
         self.assertIn('goal', decl.parameters['properties'])
@@ -169,8 +174,8 @@ class SSEGeneratorTest(TestCase):
         self.assertEqual(result, "data: Linha 1\nLinha 2\nLinha 3\n\n")
 
 
-class UserContextSerializerTest(TestCase):
-    """Testes para serialização de UserContext"""
+class StudyContextSerializerTest(TestCase):
+    """Testes para serialização de StudyContext"""
 
     def setUp(self):
         self.user = User.objects.create_user(
@@ -180,8 +185,8 @@ class UserContextSerializerTest(TestCase):
         )
 
     def test_serialize_complete_context(self):
-        """Testa serialização de UserContext completo"""
-        context = UserContext.objects.create(
+        """Testa serialização de StudyContext completo"""
+        context = StudyContext.objects.create(
             user=self.user,
             persona='student',
             goal='ENEM preparation',
@@ -203,7 +208,7 @@ class UserContextSerializerTest(TestCase):
             consent_lgpd=True
         )
 
-        serializer = UserContextSerializer(context)
+        serializer = StudyContextSerializer(context)
         data = serializer.data
 
         # Verifica campos obrigatórios
@@ -245,7 +250,7 @@ class UserContextSerializerTest(TestCase):
             'consent_lgpd': True
         }
 
-        serializer = UserContextSerializer(data=data)
+        serializer = StudyContextSerializer(data=data)
         self.assertTrue(serializer.is_valid(), serializer.errors)
 
         context = serializer.save(user=self.user)
@@ -265,7 +270,7 @@ class UserContextSerializerTest(TestCase):
             # Faltando 'persona' e 'consent_lgpd' obrigatórios
         }
 
-        serializer = UserContextSerializer(data=data)
+        serializer = StudyContextSerializer(data=data)
         self.assertFalse(serializer.is_valid())
 
         self.assertIn('persona', serializer.errors)
@@ -281,7 +286,7 @@ class UserContextSerializerTest(TestCase):
             'consent_lgpd': True
         }
 
-        serializer = UserContextSerializer(data=data)
+        serializer = StudyContextSerializer(data=data)
         self.assertFalse(serializer.is_valid())
 
         self.assertIn('weekly_time_hours', serializer.errors)
@@ -296,14 +301,14 @@ class UserContextSerializerTest(TestCase):
             'consent_lgpd': True
         }
 
-        serializer = UserContextSerializer(data=data)
+        serializer = StudyContextSerializer(data=data)
         self.assertFalse(serializer.is_valid())
 
         self.assertIn('deadline', serializer.errors)
 
     def test_partial_update(self):
         """Testa atualização parcial do contexto"""
-        context = UserContext.objects.create(
+        context = StudyContext.objects.create(
             user=self.user,
             persona='student',
             goal='Initial goal',
@@ -324,7 +329,7 @@ class UserContextSerializerTest(TestCase):
             'weekly_time_hours': 15
         }
 
-        serializer = UserContextSerializer(context, data=update_data, partial=True)
+        serializer = StudyContextSerializer(context, data=update_data, partial=True)
         self.assertTrue(serializer.is_valid(), serializer.errors)
 
         updated_context = serializer.save()
@@ -334,3 +339,43 @@ class UserContextSerializerTest(TestCase):
         # Outros campos devem permanecer iguais
         self.assertEqual(updated_context.persona, 'student')
         self.assertEqual(updated_context.deadline, date(2025, 6, 30))
+
+class PlanOutlineServiceTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="outline-user",
+            email="outline@example.com",
+            password="outline",
+        )
+        self.context = StudyContext.objects.create(
+            user=self.user,
+            persona="student",
+            goal="Aprovao em concurso",
+            deadline=date(2025, 6, 30),
+            start_date=date(2025, 1, 6),
+            end_date=date(2025, 2, 2),
+            weekly_time_hours=15,
+            study_routine="Noites e fins de semana",
+            background_level="Graduado",
+            self_assessment={"direito": 3},
+            diagnostic_status="pending",
+            diagnostic_snapshot=["precisa reforar direito penal"],
+            interests=["direito", "legislao"],
+            preferences_formats=["video"],
+            preferences_language="pt-BR",
+            preferences_accessibility=["legendas"],
+            tech_device="Notebook",
+            tech_connectivity="Banda larga",
+            notifications="email",
+            consent_lgpd=True,
+        )
+
+    def test_outline_generates_plan_and_weeks(self):
+        plan = ensure_plan_outline(self.context)
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.start_date, self.context.start_date)
+        self.assertEqual(plan.end_date, self.context.end_date)
+        self.assertEqual(plan.weeks.count(), 4)
+        first_week = plan.weeks.order_by("week_index").first()
+        self.assertEqual(first_week.week_index, 1)
+        self.assertIn("Onboarding", first_week.focus)

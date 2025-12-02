@@ -1,6 +1,6 @@
 import logging
 from django.contrib.auth import get_user_model
-from apps.accounts.models import UserContext
+from apps.accounts.models import StudyContext
 from rest_framework import serializers
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ class UserWriteSerializer(serializers.ModelSerializer):
         return instance
 
 
-class UserContextSerializer(serializers.ModelSerializer):
+class StudyContextSerializer(serializers.ModelSerializer):
     class Meta:
-        model = UserContext
+        model = StudyContext
         exclude = ["id", "user"]

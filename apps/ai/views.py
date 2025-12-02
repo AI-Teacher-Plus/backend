@@ -8,6 +8,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from django.db import transaction
+from django.db.models import Max
+from django.utils import timezone
 from django.http import StreamingHttpResponse
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from celery.result import AsyncResult
@@ -23,6 +25,8 @@ from .serializers import (
     ChatResponseSerializer,
     GeneratePlanRequestSerializer,
     StudyPlanSerializer,
+    StudyWeekSerializer,
+    StudyDaySerializer,
     StudyPlanSummarySerializer,
     TaskProgressRequestSerializer,
     GenerateDayRequestSerializer,
@@ -31,6 +35,10 @@ from .serializers import (
     StudyTaskSerializer,
     PlanMaterialUploadResponseSerializer,
     JobStatusSerializer,
+    StudyPlanWeekOverviewSerializer,
+    CreateStudyDayRequestSerializer,
+    CreateStudyDayResponseSerializer,
+    StudyDayResultSerializer,
 )
 from .services.chat import chat_once, chat_stream
 from .services.embedding import embed_batch
@@ -310,9 +318,9 @@ class GenerateStudyPlanView(APIView):
         description="Gera um plano de estudo + tarefas iniciais via IA, persistindo secoes e tarefas.",
     )
     def post(self, request):
-        user_context = getattr(request.user, "context", None)
-        if not user_context:
-            return Response({"detail": "UserContext inexistente para o usuario."}, status=400)
+        study_context = getattr(request.user, "study_context", None)
+        if not study_context:
+            return Response({"detail": "StudyContext inexistente para o usuario."}, status=400)
 
         s = GeneratePlanRequestSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -324,15 +332,15 @@ class GenerateStudyPlanView(APIView):
 
         job_id = str(uuid.uuid4())
         plan = StudyPlan.objects.create(
-            user_context=user_context,
-            title=s.validated_data.get("title") or user_context.goal,
+            user_context=study_context,
+            title=s.validated_data.get("title") or study_context.goal,
             status="draft",
             generation_status="pending",
             job_id=job_id,
             metadata={"requested_goal_override": s.validated_data.get("goal_override")},
         )
         generate_study_plan_task.apply_async(
-            args=[job_id, str(plan.id), str(user_context.id), s.validated_data.get("goal_override"), s.validated_data.get("title")],
+            args=[job_id, str(plan.id), str(study_context.id), s.validated_data.get("goal_override"), s.validated_data.get("title")],
             queue="ai_generation",
         )
         _log_api_event(
@@ -373,6 +381,38 @@ class StudyPlanDetailView(APIView):
             weeks=plan.weeks.count(),
         )
         return Response(StudyPlanSerializer(plan).data)
+
+
+class StudyPlanWeekView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="listStudyPlanWeeks",
+        responses={200: StudyPlanWeekOverviewSerializer},
+        description="Retorna apenas o esqueleto semanal (foco/status/dias) de um plano de estudos.",
+    )
+    def get(self, request, plan_id):
+        plan = (
+            StudyPlan.objects.filter(id=plan_id, user_context__user=request.user)
+            .prefetch_related("weeks__days__tasks")
+            .first()
+        )
+        if not plan:
+            return Response({"detail": "Plano nao encontrado."}, status=404)
+        weeks = plan.weeks.order_by("week_index").all()
+        serializer = StudyPlanWeekOverviewSerializer(
+            {
+                "plan_id": plan.id,
+                "weeks": StudyWeekSerializer(weeks, many=True).data,
+            }
+        )
+        _log_api_event(
+            "study_plan_weeks_loaded",
+            user_id=str(request.user.id),
+            plan_id=str(plan.id),
+            weeks=len(weeks),
+        )
+        return Response(serializer.data)
 
 
 class StudyTaskProgressView(APIView):
@@ -545,6 +585,155 @@ class GenerateStudyDayView(APIView):
             job_id=job_id,
         )
         return Response({"job_id": job_id, "plan_id": str(plan.id), "day_id": str(day.id)}, status=status.HTTP_202_ACCEPTED)
+
+
+class StudyPlanDayCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="createStudyPlanDay",
+        request=CreateStudyDayRequestSerializer,
+        responses={201: CreateStudyDayResponseSerializer},
+        description="Cria um novo dia no plano e opcionalmente aciona a IA para gerar tarefas sob demanda.",
+    )
+    def post(self, request, plan_id):
+        plan = StudyPlan.objects.filter(id=plan_id, user_context__user=request.user).first()
+        if not plan:
+            return Response({"detail": "Plano nao encontrado."}, status=404)
+
+        ser = CreateStudyDayRequestSerializer(data=request.data or {})
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+
+        week = None
+        if data.get("week_id"):
+            week = plan.weeks.filter(id=data["week_id"]).first()
+            if not week:
+                return Response({"detail": "Semana nao encontrada para o plano."}, status=400)
+        elif data.get("scheduled_date"):
+            week = (
+                plan.weeks.filter(start_date__lte=data["scheduled_date"], end_date__gte=data["scheduled_date"])
+                .order_by("week_index")
+                .first()
+            )
+        if not week:
+            week = plan.weeks.order_by("week_index").first()
+
+        next_index = (plan.days.aggregate(idx=Max("day_index")).get("idx") or 0) + 1
+        target_minutes = data.get("target_minutes") or max((plan.user_context.weekly_time_hours or 10) * 60 // 5, 30)
+        metadata = data.get("metadata") or {}
+        metadata.update(
+            {
+                "generated_from": "api_on_demand",
+                "goal_override": data.get("goal_override"),
+                "context_snapshot": data.get("context_snapshot"),
+            }
+        )
+
+        day = StudyDay.objects.create(
+            plan=plan,
+            week=week,
+            day_index=next_index,
+            scheduled_date=data.get("scheduled_date"),
+            title=data.get("title") or f"Dia {next_index}",
+            focus=data.get("focus") or (week.focus if week else plan.summary),
+            target_minutes=target_minutes,
+            status="pending",
+            metadata=metadata,
+        )
+
+        job_id = None
+        if data.get("auto_generate", True):
+            job_id = str(uuid.uuid4())
+            plan.generation_status = "pending"
+            plan.job_id = job_id
+            plan.save(update_fields=["generation_status", "job_id", "updated_at"])
+            day_meta = day.metadata or {}
+            day_meta.update({"generation_status": "pending", "job_id": job_id})
+            day.metadata = day_meta
+            day.save(update_fields=["metadata"])
+            generate_study_day_task.apply_async(
+                args=[job_id, str(plan.id), str(day.id), data.get("reset_existing", True)],
+                queue="ai_generation",
+            )
+
+        payload = CreateStudyDayResponseSerializer(
+            {
+                "plan_id": plan.id,
+                "job_id": job_id,
+                "day": StudyDaySerializer(day).data,
+            }
+        )
+        _log_api_event(
+            "study_plan_day_created",
+            user_id=str(request.user.id),
+            plan_id=str(plan.id),
+            day_id=str(day.id),
+            auto_generate=data.get("auto_generate", True),
+        )
+        return Response(payload.data, status=status.HTTP_201_CREATED)
+
+
+class StudyDayResultView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        operation_id="recordStudyDayResult",
+        request=StudyDayResultSerializer,
+        responses={200: StudyDaySerializer},
+        description="Persiste resultados agregados de um dia (status, notas, minutos, score).",
+    )
+    def post(self, request, plan_id, day_id):
+        plan = StudyPlan.objects.filter(id=plan_id, user_context__user=request.user).first()
+        if not plan:
+            return Response({"detail": "Plano nao encontrado."}, status=404)
+        day = plan.days.filter(id=day_id).first()
+        if not day:
+            return Response({"detail": "Dia nao encontrado."}, status=404)
+
+        ser = StudyDayResultSerializer(data=request.data or {})
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+
+        meta = day.metadata or {}
+        result_log = meta.get("results_log") or []
+        entry = {
+            "status": data.get("status") or day.status,
+            "minutes_spent": data.get("minutes_spent"),
+            "score": data.get("score"),
+            "notes": data.get("notes"),
+            "payload": data.get("payload"),
+            "recorded_at": timezone.now().isoformat(),
+        }
+        result_log.append(entry)
+        meta["results_log"] = result_log
+        meta["last_result"] = entry
+
+        update_fields = ["metadata", "updated_at"]
+        if data.get("status"):
+            day.status = data["status"]
+            update_fields.append("status")
+        day.metadata = meta
+        day.save(update_fields=update_fields)
+
+        plan_meta = plan.metadata or {}
+        plan_meta["last_day_result"] = {
+            "day_id": str(day.id),
+            "recorded_at": entry["recorded_at"],
+            "status": entry["status"],
+            "score": entry.get("score"),
+        }
+        plan.metadata = plan_meta
+        plan.save(update_fields=["metadata", "updated_at"])
+
+        _log_api_event(
+            "study_plan_day_result_recorded",
+            user_id=str(request.user.id),
+            plan_id=str(plan.id),
+            day_id=str(day.id),
+            status=entry["status"],
+        )
+        return Response(StudyDaySerializer(day).data)
 
 
 class StudyPlanMaterialUploadView(APIView):

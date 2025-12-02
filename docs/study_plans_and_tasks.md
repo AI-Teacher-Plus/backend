@@ -1,6 +1,6 @@
 # Planos de Estudo e Tarefas (Assistidas por IA)
 
-Objetivo: criar servicos que transformam um Goal em um Study Plan e em Study Tasks concretas, mantendo o UserContext extensivel e por objetivo para que cada tarefa/resultado seja reutilizado pelo modelo na proxima chamada. As respostas devem ser amigaveis para o front-end, especialmente para flashcards, quizzes/testes e recursos externos.
+Objetivo: criar servicos que transformam um Goal em um Study Plan e em Study Tasks concretas, mantendo o StudyContext extensivel e por objetivo para que cada tarefa/resultado seja reutilizado pelo modelo na proxima chamada. As respostas devem ser amigaveis para o front-end, especialmente para flashcards, quizzes/testes e recursos externos.
 
 ## Entidades centrais
 - Goal: id, title, description, target_outcomes, due_date, level, interests, constraints (tempo/dia, idioma).

@@ -6,6 +6,11 @@
 3. Se `generation_status`/`ingest_status` estiver `pending` ou `running`, monitorar via `/jobs/{job_id}` (polling) ou `/jobs/stream/` (SSE).
 4. Atualizar UI e cards assim que o job virar `succeeded` ou `failed`.
 
+## Autenticacao (login/refresh/logout)
+- Cookies HttpOnly (`access_token`, `refresh_token`) sǭ gerados no `POST /api/login/` usando `{ "username", "password" }` e precisam de `credentials: "include"` no fetch/Axios.
+- Renovar access token com `POST /api/refresh/` (lǭ do cookie `refresh_token`).
+- Encerrar sessǜo com `POST /api/logout/` (sem auth necessǭria); o backend apaga ambos os cookies `access_token` e `refresh_token` com `samesite=None; secure`.
+
 ## Endpoints principais
 
 | Acao | Metodo/rota | Request | Resposta | Observacoes |
@@ -19,6 +24,16 @@
 | Upload de material (RAG) | `POST /api/ai/study-plans/{plan_id}/materials/` | multipart `file`, `title?` | `202 { job_id, plan_id, file_id, document_id }`. |
 | Consultar job | `GET /api/ai/jobs/{job_id}/` | - | `200 { job_id, status, result?, error? }`. |
 | SSE de job | `GET /api/ai/jobs/stream/?job_id=...` | - | `text/event-stream` com eventos `meta`, `result`, `error`. |
+
+## UI do modal de dia (layout amplo)
+- Abrir ao clicar no dia; fundo escurecido; header fixo com título do dia/seção, status do dia, botões de fechar e pomodoro no topo direito.
+- Tamanho: `width: 90vw; max-width: 1200px; max-height: 90vh; min-height: 70vh; padding: 32px;` em desktop.
+- Corpo: grid `grid-template-rows: auto 1fr; gap: 20px; overflow: hidden`.
+- Card de tarefa: `padding: 24px; min-height: 400px;` com conteúdo em `max-height: calc(70vh - 160px); overflow: auto`.
+- Progresso: barra de 10px, cantos 999px, margem `8px 0 4px`.
+- Controles: pomodoro `min-width: 140px; padding: 10px 14px;` setas `44x44px; font-size: 18px`.
+- Tipografia: título do dia 24–26px; subtítulo 18px; corpo 16px com line-height 1.6; espaçamentos entre blocos de 16–20px.
+- Navegação: setas/teclas esquerda-direita para trocar tarefa; barra “X/Y atividades • Z%”. Rodapé de tarefa com ações Iniciar/Concluir/Pular chamando `POST /study-tasks/{task_id}/progress/`.
 
 ## Estrutura de dados
 - `StudyPlanSerializer` expõe:

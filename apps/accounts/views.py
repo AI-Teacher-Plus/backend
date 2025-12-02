@@ -6,15 +6,17 @@ from rest_framework import status, permissions
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema
 
+from apps.ai.services.plan_outline import ensure_plan_outline
+
 logger = logging.getLogger(__name__)
 
 from .serializers import (
-    UserContextSerializer,
+    StudyContextSerializer,
     UserReadSerializer,
     UserWriteSerializer,
     LoginSerializer,
     LoginResponseSerializer,
-    RefreshResponseSerializer
+    RefreshResponseSerializer,
 )
 
 User = get_user_model()
@@ -40,7 +42,7 @@ class LoginView(APIView):
             return Response({'detail': 'Invalid credentials', 'has_user_context': False}, status=status.HTTP_401_UNAUTHORIZED)
         print(f"Authentication successful for user: {user}")  # Debug
         refresh = RefreshToken.for_user(user)
-        has_user_context = hasattr(user, 'context') and user.context is not None
+        has_user_context = hasattr(user, 'study_context') and user.study_context is not None
         response = Response({'detail': 'Login successful', 'has_user_context': has_user_context})
         response.set_cookie('access_token', str(refresh.access_token), httponly=True, samesite='None', secure=True)
         response.set_cookie('refresh_token', str(refresh), httponly=True, samesite='None', secure=True)
@@ -76,7 +78,10 @@ class RefreshView(APIView):
 
 
 class LogoutView(APIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
     serializer_class = None
+
     @extend_schema(
         operation_id="logoutUser",
         responses={200: {'description': 'Logged out successfully'}},
@@ -85,8 +90,8 @@ class LogoutView(APIView):
     def post(self, request):
         print(f"Logout: user={request.user if request.user.is_authenticated else 'anonymous'}")  # Debug
         response = Response({'detail': 'Logged out'}, status=status.HTTP_200_OK)
-        response.delete_cookie('access_token')
-        response.delete_cookie('refresh_token')
+        response.delete_cookie('access_token', samesite='None')
+        response.delete_cookie('refresh_token', samesite='None')
         return response
 
 
@@ -128,7 +133,7 @@ class UserListCreateView(APIView):
             print("Serializer is valid", flush=True)  # Debug
             sys.stdout.flush()
             user = serializer.save()
-            has_user_context = hasattr(user, 'context') and user.context is not None
+            has_user_context = hasattr(user, 'study_context') and user.study_context is not None
             print(f"User created: {user.username}, has_context={has_user_context}", flush=True)  # Debug
             sys.stdout.flush()
             response_serializer = UserReadSerializer(user)
@@ -189,44 +194,45 @@ class UserDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class UserContextView(APIView):
+class StudyContextView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
-        operation_id="getUserContext",
+        operation_id="getStudyContext",
         responses={
-            200: UserContextSerializer,
-            404: {'description': 'User context not found'},
+            200: StudyContextSerializer,
+            404: {'description': 'Study context not found'},
         },
         description="Retrieves the current authenticated user's context if it exists."
     )
     def get(self, request):
-        ctx = getattr(request.user, "context", None)
+        ctx = getattr(request.user, "study_context", None)
         if ctx is None:
-            return Response({"detail": "User context not found"}, status=status.HTTP_404_NOT_FOUND)
-        serializer = UserContextSerializer(ctx)
+            return Response({"detail": "Study context not found"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StudyContextSerializer(ctx)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @extend_schema(
-        operation_id="updateUserContext",
-        request=UserContextSerializer,
+        operation_id="upsertStudyContext",
+        request=StudyContextSerializer,
         responses={
-            200: UserContextSerializer,
-            201: UserContextSerializer,
-            400: UserContextSerializer
+            200: StudyContextSerializer,
+            201: StudyContextSerializer,
+            400: StudyContextSerializer
         },
         description="Updates or creates user context information."
     )
     def post(self, request):
         print(f"User context update: user={request.user}, data={request.data}")  # Debug
-        ctx = getattr(request.user, "context", None)
-        serializer = UserContextSerializer(instance=ctx, data=request.data, partial=True)
+        ctx = getattr(request.user, "study_context", None)
+        serializer = StudyContextSerializer(instance=ctx, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         created = ctx is None
         obj = serializer.save(user=request.user)
+        ensure_plan_outline(obj)
         print(f"User context updated: {obj}")  # Debug
         response_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
-        return Response(UserContextSerializer(obj).data, status=response_status)
+        return Response(StudyContextSerializer(obj).data, status=response_status)
 
 
 class MeView(APIView):

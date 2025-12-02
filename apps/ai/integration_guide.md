@@ -7,7 +7,7 @@ title: Guia de Integração — Chat AI (SSE)
 O backend expõe dois modos para conversar com o assistente:
 
 - **Resposta única** (`POST /api/ai/chat/`): obtém todo o texto de uma vez.
-- **Streaming SSE** (`POST /api/ai/chat/sse/`): envia fragmentos e eventos estruturados em tempo real, possibilitando tool calls, persistência do `UserContext` e geração do plano de estudos.
+- **Streaming SSE** (`POST /api/ai/chat/sse/`): envia fragmentos e eventos estruturados em tempo real, possibilitando tool calls, persistência do `StudyContext` e geração do plano de estudos.
 
 Este guia foca no fluxo SSE e descreve todos os eventos que o front-end deve tratar.
 
@@ -46,10 +46,10 @@ Eventos de controle. O campo `data.type` identifica o estágio.
 | type                       | Significado                                                                                                  | Payload (campos adicionais)                                      |
 |---------------------------|---------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------|
 | `session_started`         | Conexão iniciada e prompt preparado.                                                                          | `session_id`                                                     |
-| `context_committed`       | Tool `commit_user_context` executou com sucesso.                                                              | `session_id`, `user_context_id`                                  |
-| `plan_generation_started` | LLM começou a streamar o plano de estudos.                                                                    | `session_id`, `user_context_id`                                  |
-| `plan_generation_completed` | Stream do plano concluiu sem erro.                                                                           | `session_id`, `user_context_id`, `tokens_streamed`               |
-| `session_finished`        | Sessão encerrada. Verifique `committed` e `error`.                                                            | `session_id`, `total_tokens`, `committed`, `user_context_id`, `error?` |
+| `context_committed`       | Tool `commit_user_context` executou com sucesso.                                                              | `session_id`, `study_context_id`                                  |
+| `plan_generation_started` | LLM começou a streamar o plano de estudos.                                                                    | `session_id`, `study_context_id`                                  |
+| `plan_generation_completed` | Stream do plano concluiu sem erro.                                                                           | `session_id`, `study_context_id`, `tokens_streamed`               |
+| `session_finished`        | Sessão encerrada. Verifique `committed` e `error`.                                                            | `session_id`, `total_tokens`, `committed`, `study_context_id`, `error?` |
 
 ### Recomendações de UI
 
@@ -97,7 +97,7 @@ Erros estruturados.
 {
   "stage": "tool_call",
   "tool": "commit_user_context",
-  "message": "UserContextSerializer validation error"
+  "message": "StudyContextSerializer validation error"
 }
 ```
 

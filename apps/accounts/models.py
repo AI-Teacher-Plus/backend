@@ -17,9 +17,16 @@ class FileRef(models.Model):
         return self.file.name
 
 
-class UserContext(models.Model):
+class StudyContext(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='context')
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='study_context',
+    )
+    plan_label = models.CharField(max_length=120, blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
     persona = models.CharField(max_length=20)
     goal = models.CharField(max_length=100)
     deadline = models.DateField()
@@ -40,7 +47,7 @@ class UserContext(models.Model):
     consent_lgpd = models.BooleanField(default=False)
 
     def __str__(self):
-        return f"Context for {self.user}"
+        return f"StudyContext for {self.user}"
 
 
 class TeacherContext(models.Model):
@@ -81,7 +88,7 @@ class StudyPlan(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user_context = models.ForeignKey(UserContext, on_delete=models.CASCADE, related_name="study_plans")
+    user_context = models.ForeignKey(StudyContext, on_delete=models.CASCADE, related_name="study_plans")
     title = models.CharField(max_length=200, blank=True)
     summary = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")

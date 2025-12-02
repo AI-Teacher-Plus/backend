@@ -3,7 +3,7 @@ import logging
 from celery import shared_task
 from django.db import transaction
 
-from apps.accounts.models import StudyPlan, UserContext
+from apps.accounts.models import StudyPlan, StudyContext
 from apps.ai.models import Document, Chunk
 from apps.ai.services.embedding import embed_batch
 from apps.ai.services.study_plan_generation import (
@@ -52,11 +52,11 @@ def _set_day_status(day, status: str, error: str | None = None, job_id: str | No
 
 
 @shared_task(name="ai.generate_study_plan", bind=True)
-def generate_study_plan_task(self, job_id: str, plan_id: str, user_context_id: str, goal_override: str | None, title: str | None):
+def generate_study_plan_task(self, job_id: str, plan_id: str, study_context_id: str, goal_override: str | None, title: str | None):
     plan = StudyPlan.objects.filter(id=plan_id).first()
-    ctx = UserContext.objects.filter(id=user_context_id).first()
+    ctx = StudyContext.objects.filter(id=study_context_id).first()
     if not plan or not ctx:
-        return {"status": "failed", "message": "Plan or UserContext not found"}
+        return {"status": "failed", "message": "Plan or StudyContext not found"}
     _set_plan_status(plan, "running", job_id=job_id, error=None)
     try:
         documents = Document.objects.filter(owner=ctx.user)

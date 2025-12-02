@@ -10,7 +10,7 @@ from apps.ai.tools.commit_user_context import function_declarations, handle_tool
 
 SYSTEM = (
   "Você é um assistente de onboarding (AI Wizard) em pt-BR para Teacher Plus. "
-  "Seu objetivo é coletar dados essenciais do usuário para criar seu perfil contextual (UserContext), respeitando LGPD. "
+  "Seu objetivo é coletar dados essenciais do usuário para criar seu perfil contextual (StudyContext), respeitando LGPD. "
   "Siga este fluxo de perguntas de forma conversacional e natural:\n\n"
   "1. **Identificação inicial**: Pergunte 'Quem é você?' (estudante/concurseiro, professor(a), outro). "
   "   - Se estudante/concurseiro: pergunte objetivo principal (ENEM, vestibular específico, concurso, reforço em disciplina, graduação).\n"
@@ -220,7 +220,7 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
     resp = generate(contents=hist, tools=tools, stream=False, session_id=session_id)
     calls = _extract_function_calls(resp)
     committed = False
-    context_id: str | None = None
+    study_context_id: str | None = None
     token_index = 0
 
     while calls:
@@ -240,7 +240,8 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
                     "type": "session_finished",
                     "total_tokens": token_index,
                     "committed": committed,
-                    "user_context_id": context_id,
+                    "study_context_id": study_context_id,
+                    "user_context_id": study_context_id,
                     "error": error_payload,
                 })
                 return
@@ -257,10 +258,11 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
             if call.name == "commit_user_context":
                 if result.get("status") == "ok":
                     committed = True
-                    context_id = result.get("user_context_id")
+                    study_context_id = result.get("study_context_id") or result.get("user_context_id")
                     yield _wrap("meta", {
                         "type": "context_committed",
-                        "user_context_id": context_id,
+                        "study_context_id": study_context_id,
+                        "user_context_id": study_context_id,
                     })
                 else:
                     error_payload = {
@@ -274,7 +276,8 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
                         "type": "session_finished",
                         "total_tokens": token_index,
                         "committed": committed,
-                        "user_context_id": context_id,
+                        "study_context_id": study_context_id,
+                        "user_context_id": study_context_id,
                         "error": error_payload,
                     })
                     return
@@ -321,7 +324,8 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
             }))
         yield _wrap("meta", {
             "type": "plan_generation_started",
-            "user_context_id": context_id,
+            "study_context_id": study_context_id,
+            "user_context_id": study_context_id,
         })
         stream = generate(contents=hist, stream=True, session_id=session_id)
         for chunk in stream:
@@ -338,7 +342,8 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
                 time.sleep(STREAM_DELAY_MS / 1000.0)
         yield _wrap("meta", {
             "type": "plan_generation_completed",
-            "user_context_id": context_id,
+            "study_context_id": study_context_id,
+            "user_context_id": study_context_id,
             "tokens_streamed": token_index,
         })
     else:
@@ -364,5 +369,6 @@ def chat_stream(user, messages: list[dict], session_id: str | None = None) -> Ge
         "type": "session_finished",
         "total_tokens": token_index,
         "committed": committed,
-        "user_context_id": context_id,
+        "study_context_id": study_context_id,
+        "user_context_id": study_context_id,
     })

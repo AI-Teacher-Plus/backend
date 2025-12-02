@@ -29,7 +29,7 @@ Objetivo: mover chamadas pesadas (LLM, embed, web research) para tarefas Celery,
    - Alternativa/extra: GET do recurso (StudyPlan/Document) lendo generation_status/ingest_status.
 
 ## Tarefas Celery (exemplo)
-- generate_study_plan(job_id, user_id, user_context_id, goal_override, title)
+- generate_study_plan(job_id, user_id, study_context_id, goal_override, title)
 - generate_section_tasks(job_id, plan_id, section_id)
 - ingest_material(job_id, plan_id, file_ref_id, document_title)
 - (opcional) web_research(job_id, plan_id, section_id, query)

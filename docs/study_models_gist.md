@@ -4,8 +4,8 @@ Este documento resume os principais modelos persistidos relacionados a planos de
 
 ## Visão geral das entidades
 
-- **UserContext**: Perfil do estudante (persona, objetivo, prazo, interesses, materiais). Cada usuário possui um único contexto ativo.
-- **StudyPlan**: Plano gerado por IA para um UserContext, incluindo seções (dias), status e vínculo com documentos RAG.
+- **StudyContext**: Perfil do estudante (persona, objetivo, prazo, interesses, materiais). Cada usuário possui um único contexto ativo.
+- **StudyPlan**: Plano gerado por IA para um StudyContext, incluindo seções (dias), status e vínculo com documentos RAG.
 - **StudyDay**: Representa uma seção/unidade do plano (1:n com StudyPlan).
 - **StudyTask**: Item de aprendizado associado a um StudyDay (flashcard, quiz, lecture, etc.).
 - **Document**: Material indexado no módulo RAG (upload, resumo, etc.), ligado aos planos.
@@ -16,7 +16,7 @@ Este documento resume os principais modelos persistidos relacionados a planos de
 
 ```mermaid
 classDiagram
-    class UserContext {
+    class StudyContext {
         UUID id
         FK user
         persona
@@ -89,18 +89,18 @@ classDiagram
         file (FileField)
     }
 
-    UserContext --> "1..n" StudyPlan
+    StudyContext --> "1..n" StudyPlan
     StudyPlan --> "1..n" StudyDay
     StudyDay --> "1..n" StudyTask
     StudyPlan --> "0..n" Document : rag_documents (M2M)
     Document --> "1..n" Chunk
-    UserContext --> "0..n" FileRef : materials (M2M)
+    StudyContext --> "0..n" FileRef : materials (M2M)
     StudyTask --> "0..n" FileRef : materials (M2M)
 ```
 
 ## Estrutura detalhada
 
-### UserContext (apps/accounts/models.py)
+### StudyContext (apps/accounts/models.py)
 - **Campos chave**: persona, goal, deadline (Date), weekly_time_hours (int), study_routine, background_level, interests[], preferences, tech info, diagnostic_snapshot, consent_lgpd.
 - **Relacionamentos**:
   - `user`: OneToOne com AUTH_USER.
@@ -151,7 +151,7 @@ classDiagram
 
 ### FileRef
 - Armazena arquivo enviado (`FileField upload_to=uploads/`).
-- Relacionado a UserContext (materiais globais) e StudyTask (materiais por tarefa).
+- Relacionado a StudyContext (materiais globais) e StudyTask (materiais por tarefa).
 - Referenciado também pelas seeds (SeedsForAI) e ingest Celery.
 
 ## Fluxo de geração (Mermaid sequence)
@@ -166,7 +166,7 @@ sequenceDiagram
     FE->>API: POST /api/ai/study-plans/generate/
     API->>DB: cria StudyPlan (status=draft, generation_status=pending)
     API->>Celery: enqueue generate_study_plan_task(job_id, plan_id)
-    Celery->>DB: busca UserContext + Documentos
+    Celery->>DB: busca StudyContext + Documentos
     Celery->>LLM: prompt -> schema JSON (plan+tasks)
     Celery->>DB: atualiza StudyPlan, cria StudyDay/StudyTask
     Celery->>DB: set generation_status=succeeded, last_error=""

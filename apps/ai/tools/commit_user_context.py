@@ -5,7 +5,8 @@ from datetime import timedelta
 from django.utils import timezone
 from google.genai import types
 
-from apps.accounts.serializers import UserContextSerializer
+from apps.accounts.serializers import StudyContextSerializer
+from apps.ai.services.plan_outline import ensure_plan_outline
 from collections.abc import Mapping
 
 
@@ -54,13 +55,16 @@ def _schema_from_dict(d: Mapping) -> types.Schema:
     )
 
 
-# JSON Schema mínimo do UserContext
-USER_CONTEXT_SCHEMA = {
+# JSON Schema mínimo do StudyContext
+STUDY_CONTEXT_SCHEMA = {
   "type": "object",
   "properties": {
     "persona": {"type": "string", "enum": ["student", "teacher", "other"]},
     "goal": {"type": "string"},
     "deadline": {"type": "string", "format": "date"},
+    "plan_label": {"type": "string"},
+    "start_date": {"type": "string", "format": "date"},
+    "end_date": {"type": "string", "format": "date"},
     "weekly_time_hours": {"type": "integer", "minimum": 0},
     "study_routine": {"type": "string"},
     "background_level": {"type": "string"},
@@ -81,13 +85,17 @@ USER_CONTEXT_SCHEMA = {
 }
 
 
+_TOOL_NAMES = ("commit_study_context", "commit_user_context")
+
+
 def function_declarations() -> list[types.FunctionDeclaration]:
     return [
         types.FunctionDeclaration(
-            name="commit_user_context",
+            name=tool_name,
             description="Cria/atualiza o contexto do usuário autenticado.",
-            parameters=_schema_from_dict(USER_CONTEXT_SCHEMA)
+            parameters=_schema_from_dict(STUDY_CONTEXT_SCHEMA),
         )
+        for tool_name in _TOOL_NAMES
     ]
 
 
@@ -141,8 +149,9 @@ def _normalize_consent(value):
 
 def _normalize_args(args: dict) -> dict:
     normalized = dict(args or {})
-    if "deadline" in normalized:
-        normalized["deadline"] = _normalize_deadline(normalized.get("deadline"))
+    for date_field in ("deadline", "start_date", "end_date"):
+        if date_field in normalized:
+            normalized[date_field] = _normalize_deadline(normalized.get(date_field))
     if "weekly_time_hours" in normalized:
         normalized["weekly_time_hours"] = _normalize_weekly_hours(normalized.get("weekly_time_hours"))
     if "consent_lgpd" in normalized:
@@ -151,7 +160,7 @@ def _normalize_args(args: dict) -> dict:
 
 
 def handle_tool_call(user, name: str, args: dict) -> dict:
-    if name != "commit_user_context":
+    if name not in _TOOL_NAMES:
         return {"status": "error", "message": f"Unknown tool {name}"}
 
     normalized_args = _normalize_args(args)
@@ -159,8 +168,13 @@ def handle_tool_call(user, name: str, args: dict) -> dict:
         "event": "commit_user_context_payload",
         "normalized": normalized_args,
     }))
-    instance = getattr(user, "context", None)
-    ser = UserContextSerializer(instance=instance, data=normalized_args, partial=True)
+    instance = getattr(user, "study_context", None)
+    ser = StudyContextSerializer(instance=instance, data=normalized_args, partial=True)
     ser.is_valid(raise_exception=True)
     obj = ser.save(user=user)
-    return {"status": "ok", "user_context_id": str(obj.id)}
+    ensure_plan_outline(obj)
+    return {
+        "status": "ok",
+        "study_context_id": str(obj.id),
+        "user_context_id": str(obj.id),
+    }

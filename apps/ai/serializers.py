@@ -1,7 +1,7 @@
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
-from apps.accounts.models import StudyPlan, StudyTask
+from apps.accounts.models import StudyPlan, StudyTask, StudyDay
 
 
 class DocumentIngestSerializer(serializers.Serializer):
@@ -392,6 +392,41 @@ class StudyPlanSummarySerializer(serializers.Serializer):
         else:
             data["current_week"] = ""
         return data
+
+
+class StudyPlanWeekOverviewSerializer(serializers.Serializer):
+    plan_id = serializers.UUIDField()
+    weeks = StudyWeekSerializer(many=True)
+
+
+class CreateStudyDayRequestSerializer(serializers.Serializer):
+    week_id = serializers.UUIDField(required=False, allow_null=True)
+    scheduled_date = serializers.DateField(required=False, allow_null=True)
+    title = serializers.CharField(required=False, allow_blank=True)
+    focus = serializers.CharField(required=False, allow_blank=True)
+    target_minutes = serializers.IntegerField(required=False, min_value=0)
+    goal_override = serializers.CharField(required=False, allow_blank=True)
+    context_snapshot = serializers.DictField(required=False)
+    metadata = serializers.DictField(required=False)
+    auto_generate = serializers.BooleanField(required=False, default=True)
+    reset_existing = serializers.BooleanField(required=False, default=True)
+
+
+class CreateStudyDayResponseSerializer(serializers.Serializer):
+    plan_id = serializers.UUIDField()
+    job_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    day = StudyDaySerializer()
+
+
+class StudyDayResultSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=[choice[0] for choice in StudyDay.STATUS_CHOICES],
+        required=False,
+    )
+    minutes_spent = serializers.IntegerField(required=False, min_value=0)
+    score = serializers.FloatField(required=False)
+    notes = serializers.CharField(required=False, allow_blank=True)
+    payload = serializers.DictField(required=False)
 
 
 class JobStatusSerializer(serializers.Serializer):
