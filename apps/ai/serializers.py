@@ -2,6 +2,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.accounts.models import StudyPlan, StudyTask, StudyDay
+from apps.ai.models import Document
 
 
 class DocumentIngestSerializer(serializers.Serializer):
@@ -363,7 +364,11 @@ class StudyPlanSerializer(serializers.Serializer):
     metadata = serializers.DictField()
     weeks = StudyWeekSerializer(many=True, source="weeks.all")
     days = StudyDaySerializer(many=True, source="days.all")
-    rag_document_ids = serializers.ListSerializer(child=serializers.UUIDField(), source="rag_documents.all")
+    rag_document_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        read_only=True,
+        source="rag_documents",
+    )
     generation_status = serializers.CharField()
     last_error = serializers.CharField(allow_blank=True)
     job_id = serializers.CharField(allow_blank=True, allow_null=True)
