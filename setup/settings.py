@@ -150,6 +150,9 @@ USE_TZ = True
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Feature flags
+STUDY_PLAN_LEGACY_MODE = os.getenv("STUDY_PLAN_LEGACY_MODE", "").lower() in ("1", "true", "yes", "on")
+
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/

@@ -415,7 +415,7 @@ class CreateStudyDayRequestSerializer(serializers.Serializer):
 class CreateStudyDayResponseSerializer(serializers.Serializer):
     plan_id = serializers.UUIDField()
     job_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    day = StudyDaySerializer()
+    day = serializers.DictField()
 
 
 class StudyDayResultSerializer(serializers.Serializer):

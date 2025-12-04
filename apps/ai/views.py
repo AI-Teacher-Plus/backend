@@ -403,7 +403,7 @@ class StudyPlanWeekView(APIView):
         serializer = StudyPlanWeekOverviewSerializer(
             {
                 "plan_id": plan.id,
-                "weeks": StudyWeekSerializer(weeks, many=True).data,
+                "weeks": weeks,
             }
         )
         _log_api_event(
