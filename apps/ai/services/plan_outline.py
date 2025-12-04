@@ -1,6 +1,7 @@
 import math
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -29,6 +30,9 @@ def _week_focus(goal: str, index: int, total: int) -> str:
 def ensure_plan_outline(study_context: StudyContext) -> StudyPlan:
     if not study_context:
         raise ValueError("StudyContext e obrigatorio para gerar o outline")
+
+    if getattr(settings, "STUDY_PLAN_LEGACY_MODE", False):
+        return _generate_legacy_plan(study_context)
 
     start_date, end_date = _coerce_dates(study_context)
     total_days = (end_date - start_date).days + 1
@@ -134,3 +138,29 @@ def _sync_weeks(plan: StudyPlan, start_date, end_date, week_count: int, goal: st
             )
         keep_ids.append(week.id)
     plan.weeks.exclude(id__in=keep_ids).delete()
+
+
+def _generate_legacy_plan(study_context: StudyContext) -> StudyPlan:
+    """
+    Quando o modo legacy estiver ativo reaproveitamos o pipeline completo
+    de geracao persistido em study_plan_generation, garantindo que o
+    onboarding produza o mesmo tipo de plano das requisicoes manuais.
+    """
+    from apps.ai.models import Document
+    from apps.ai.services import study_plan_generation
+
+    documents = Document.objects.filter(owner=study_context.user)
+    payload = study_plan_generation.generate_plan_payload(
+        user_context=study_context,
+        documents=documents,
+        goal_override=None,
+    )
+    plan = study_context.study_plans.order_by("-generated_at").first()
+    with transaction.atomic():
+        return study_plan_generation.persist_plan_from_payload(
+            user_context=study_context,
+            payload=payload,
+            title=study_context.plan_label or study_context.goal,
+            documents=documents,
+            plan=plan,
+        )

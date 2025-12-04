@@ -28,7 +28,7 @@ from apps.ai.services import study_plan_generation_legacy as legacy
 
 logger = logging.getLogger(__name__)
 
-LEGACY_MODE = getattr(settings, "STUDY_PLAN_LEGACY_MODE", False)
+LEGACY_MODE = getattr(settings, "STUDY_PLAN_LEGACY_MODE", True)
 
 
 PLAN_RESPONSE_SCHEMA = {
@@ -386,6 +386,7 @@ def _load_json_response(resp) -> dict:
 
 def generate_plan_payload(user_context: StudyContext, documents, goal_override: str | None = None) -> dict:
     if LEGACY_MODE:
+        print(f"USANDO LEGACY MODE PARA GERAÇÃO DE PLANO")
         return legacy.generate_plan_payload(user_context, documents, goal_override)
     goal_line = goal_override or user_context.goal
     prompt = (
